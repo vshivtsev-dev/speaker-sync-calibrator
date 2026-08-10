@@ -53,6 +53,16 @@ class VirtualSpeaker:
     """How this speaker interprets ``sync_adjust``; ``-1`` models an inverted
     server convention, which the validation step must detect."""
 
+    glitches: tuple[tuple[int, float], ...] = ()
+    """``(chirp_index, extra_ms)`` — a one-off timing hiccup on that chirp.
+
+    Models a player resynchronising its clock mid-session, or a buffer
+    stumbling. The median across a round should absorb it, and the analysis
+    should say it happened."""
+
+    def glitch_at(self, chirp_index: int) -> float:
+        return sum(extra for index, extra in self.glitches if index == chirp_index)
+
     @property
     def acoustic_ms(self) -> float:
         return distance_to_ms(self.distance_m)
@@ -72,6 +82,7 @@ class VirtualSpeaker:
             sync_adjust_ms=sync_adjust_ms,
             reflections=self.reflections,
             sign=self.sign,
+            glitches=self.glitches,
         )
 
 
@@ -153,7 +164,12 @@ def render_recording(
     lead_in = cfg.lead_in_seconds * rate
 
     max_latency_ms = max(
-        (s.total_latency_ms + max((r[0] for r in s.reflections), default=0.0) for s in speakers),
+        (
+            s.total_latency_ms
+            + max((r[0] for r in s.reflections), default=0.0)
+            + max((g[1] for g in s.glitches), default=0.0)
+            for s in speakers
+        ),
         default=0.0,
     )
     total = int(
@@ -174,12 +190,13 @@ def render_recording(
             if not any(r.covers(moment) and speaker.player_id in r.audible for r in rounds):
                 continue
 
+            glitch_ms = speaker.glitch_at(index)
             arrivals = [(0.0, 1.0), *speaker.reflections]
             for extra_ms, extra_gain in arrivals:
                 position = (
                     lead_in
                     + index * grid_step
-                    + (speaker.total_latency_ms + extra_ms) * rate / 1000.0
+                    + (speaker.total_latency_ms + glitch_ms + extra_ms) * rate / 1000.0
                 )
                 whole = int(np.floor(position))
                 shifted = _fractional_shift(chirp, position - whole)

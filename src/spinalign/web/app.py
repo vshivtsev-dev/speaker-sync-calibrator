@@ -39,7 +39,14 @@ from spinalign.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
 from spinalign.ma.backend import SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
-RECORDING_TIMEOUT_SECONDS = 30.0
+
+# Audio is uploaded as it is recorded, so by the time recording stops most of
+# it has already arrived and this covers only the tail. It still scales with
+# the recording, because a phone reaching the app through a tunnel uploads at
+# whatever the tunnel allows, not at LAN speed.
+RECORDING_TIMEOUT_FLOOR_SECONDS = 30.0
+RECORDING_TIMEOUT_SHARE = 0.5
+"""Tail allowance as a fraction of the recording's own length."""
 
 TOKEN_COOKIE = "spinalign_token"
 TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
@@ -89,11 +96,16 @@ class BrowserRecorder:
         self._chunks: list[np.ndarray] = []
         self._sample_rate: int | None = None
         self._complete = asyncio.Event()
+        self._timeout = RECORDING_TIMEOUT_FLOOR_SECONDS
 
     async def start(self, signal: TestSignal) -> None:
         self._chunks.clear()
         self._sample_rate = None
         self._complete.clear()
+        self._timeout = max(
+            RECORDING_TIMEOUT_FLOOR_SECONDS,
+            signal.duration_seconds * RECORDING_TIMEOUT_SHARE,
+        )
         await self._socket.send_json(
             {
                 "type": "record_start",
@@ -104,9 +116,11 @@ class BrowserRecorder:
     async def stop(self) -> tuple[np.ndarray, int]:
         await self._socket.send_json({"type": "record_stop"})
         try:
-            await asyncio.wait_for(self._complete.wait(), RECORDING_TIMEOUT_SECONDS)
+            await asyncio.wait_for(self._complete.wait(), self._timeout)
         except TimeoutError as error:
-            raise RuntimeError("the browser never finished uploading the recording") from error
+            raise RuntimeError(
+                f"the browser did not finish uploading the recording within {self._timeout:.0f}s"
+            ) from error
 
         if not self._chunks or not self._sample_rate:
             raise RuntimeError("the browser returned an empty recording")

@@ -25,8 +25,16 @@ DEFAULT_GUARD_CHIRPS = 2
 
 # Readings inside one round come from the same speaker in the same position,
 # so they should agree closely. Anything looser means the recording or the
-# stream hiccuped and the grid can no longer be trusted.
-GRID_TOLERANCE_MS = 3.0
+# stream hiccuped during that round.
+#
+# The check is on the worst *individual* deviation from the round's median,
+# not on the scatter of the group. With only a handful of readings per speaker
+# a single bad one leaves the scatter untouched — for [X, X, X+5] the median
+# absolute deviation is exactly zero — so a spread-based check would stay
+# silent about precisely the glitch worth reporting. The median still gives
+# the right answer in that case; what would be lost is telling the user that
+# something moved.
+OUTLIER_TOLERANCE_MS = 2.0
 
 
 @dataclass(frozen=True)
@@ -152,10 +160,14 @@ def analyze(
             continue
 
         spread_ms = samples_to_ms(estimate.spread, sample_rate)
-        if spread_ms > GRID_TOLERANCE_MS:
+        worst_ms = samples_to_ms(
+            max((abs(sample - estimate.value) for sample in estimate.samples), default=0.0),
+            sample_rate,
+        )
+        if worst_ms > OUTLIER_TOLERANCE_MS:
             problems.append(
-                f"{plan.player_id}: readings scatter by {spread_ms:.1f} ms, "
-                "the recording or the stream likely glitched"
+                f"{plan.player_id}: one reading is {worst_ms:.1f} ms away from the others, "
+                "so the recording or the stream glitched during this round"
             )
 
         readings[plan.player_id] = SpeakerReading(

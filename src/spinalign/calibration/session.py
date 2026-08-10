@@ -81,7 +81,24 @@ class Recorder(Protocol):
 @dataclass(frozen=True)
 class SessionConfig:
     chirps_per_round: int = 5
+    """Chirps each speaker gets, before the guard is deducted.
+
+    This is the session's main trade-off. The default leaves three readings
+    per speaker: enough for the median to shrug off a single bad one, and a
+    ~26 s pass for three speakers. Raising it buys margin in two places at
+    once — the median gets harder to move, and the outlier check in
+    :mod:`spinalign.calibration.measure` gets more evidence to notice a glitch
+    with — at a directly proportional cost in session length, doubled because
+    the run is measured and then verified.
+    """
+
     guard_chirps: int = 2
+    """Chirps discarded at the start of each round.
+
+    They absorb the delay between issuing a mute and it taking effect, which
+    is the only place network latency touches the measurement. At the default
+    settings this leaves about 2.25 seconds of slack.
+    """
     period_seconds: float = DEFAULT_PERIOD_SECONDS
     chirp_seconds: float = DEFAULT_CHIRP_SECONDS
     f_start: float = DEFAULT_F_START
@@ -316,5 +333,7 @@ async def calibrate(
         after=after,
         applied=applied,
         sign=sign,
-        problems=tuple(problems),
+        # A fault present in both passes reports itself twice; the reader
+        # learns nothing from the repetition. dict preserves first-seen order.
+        problems=tuple(dict.fromkeys(problems)),
     )

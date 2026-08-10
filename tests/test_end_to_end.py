@@ -166,6 +166,27 @@ async def test_writes_are_batched_once_per_player():
     assert len(written_ids) == len(set(written_ids))
 
 
+async def test_a_mid_round_glitch_is_reported_without_spoiling_the_result():
+    """A player resynchronising its clock mid-round shifts one chirp.
+
+    The median across the round absorbs it, so the correction stays right —
+    but the user has to be told, because a calibration that is quietly wrong
+    is far worse than one that says something happened.
+    """
+    speakers = mixed_speakers()
+    # Chirp 8 falls inside the second speaker's measured window.
+    speakers[1] = VirtualSpeaker(
+        "avr", "Гостиная", hardware_latency_ms=80.0, distance_m=4.0, glitches=((8, 5.0),)
+    )
+    server, recorder, clock = make_server(speakers, snr_db=30.0)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 3.0
+    assert any("avr" in problem for problem in report.problems)
+
+
 async def test_noisy_room_still_converges():
     server, recorder, clock = make_server(snr_db=5.0)
 
