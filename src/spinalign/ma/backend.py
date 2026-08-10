@@ -33,7 +33,10 @@ class PlayerInfo:
 
     @property
     def is_sendspin(self) -> bool:
-        return self.provider == SENDSPIN_PROVIDER
+        # Music Assistant reports a provider *instance* id, which for a single
+        # configured instance is just "sendspin" but carries a suffix when
+        # several are set up.
+        return self.provider.split("--", 1)[0] == SENDSPIN_PROVIDER
 
     @property
     def is_calibratable(self) -> bool:

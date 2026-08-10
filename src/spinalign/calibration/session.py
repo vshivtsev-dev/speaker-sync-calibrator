@@ -47,6 +47,27 @@ from spinalign.ma.backend import PlayerInfo, SpeakerBackend
 
 Sleeper = Callable[[float], Awaitable[None]]
 
+ProgressCallback = Callable[[dict], None]
+"""Notified as the session advances, so the UI can show which speaker is
+playing rather than a spinner for half a minute."""
+
+SignalUrl = "str | Callable[[TestSignal], str]"
+"""Where the media server should fetch the test track.
+
+Accepts a callable because the track's length depends on how many speakers are
+being calibrated: the URL can then carry the parameters and stay stateless,
+rather than the web layer having to stash the current signal somewhere the
+audio route can find it."""
+
+
+def _resolve_url(signal_url, signal: TestSignal) -> str:
+    return signal_url(signal) if callable(signal_url) else signal_url
+
+
+def _report(progress: ProgressCallback | None, **event) -> None:
+    if progress is not None:
+        progress(event)
+
 
 class Recorder(Protocol):
     """Whatever is holding the microphone — a browser, or the simulator."""
@@ -127,8 +148,9 @@ async def measure_once(
     *,
     reference_id: str | None = None,
     config: SessionConfig | None = None,
-    signal_url: str = "",
+    signal_url="",
     sleep: Sleeper = asyncio.sleep,
+    progress: ProgressCallback | None = None,
 ) -> MeasurementPass:
     """Run one acoustic pass and return a latency per speaker."""
     cfg = config or SessionConfig()
@@ -151,13 +173,21 @@ async def measure_once(
     audible: str | None = None
 
     try:
-        await backend.play_url(leader, signal_url)
+        await backend.play_url(leader, _resolve_url(signal_url, signal))
         for index, plan in enumerate(rounds):
             if plan.player_id != audible:
                 if audible is not None:
                     await backend.set_muted(audible, True)
                 await backend.set_muted(plan.player_id, False)
                 audible = plan.player_id
+
+            _report(
+                progress,
+                stage="round",
+                round=index + 1,
+                rounds=len(rounds),
+                player_id=plan.player_id,
+            )
 
             # The first round also absorbs the stream's own start-up delay.
             round_seconds = cfg.chirps_per_round * cfg.period_seconds
@@ -169,6 +199,8 @@ async def measure_once(
         recording, sample_rate = await recorder.stop()
         for player_id in player_ids:
             await backend.set_muted(player_id, False)
+
+    _report(progress, stage="analyzing")
 
     arrivals = detect_arrivals(
         recording,
@@ -228,10 +260,11 @@ async def calibrate(
     *,
     reference_id: str | None = None,
     config: SessionConfig | None = None,
-    signal_url: str = "",
+    signal_url="",
     sign: int = 1,
     verify: bool = True,
     sleep: Sleeper = asyncio.sleep,
+    progress: ProgressCallback | None = None,
 ) -> CalibrationReport:
     """Measure, correct, and then prove the correction worked."""
     cfg = config or SessionConfig()
@@ -239,6 +272,7 @@ async def calibrate(
     if len(players) < 2:
         raise ValueError("need at least two available Sendspin players to calibrate")
 
+    _report(progress, stage="pass", which="before", players=len(players))
     before = await measure_once(
         backend,
         recorder,
@@ -247,14 +281,17 @@ async def calibrate(
         config=cfg,
         signal_url=signal_url,
         sleep=sleep,
+        progress=progress,
     )
     problems = list(before.analysis.problems)
     solution = solve(build_measurements(before, players), sign=sign)
 
+    _report(progress, stage="applying", writes=len(solution.changed()))
     applied = await apply_solution(backend, solution)
 
     after: MeasurementPass | None = None
     if verify and applied:
+        _report(progress, stage="pass", which="after", players=len(players))
         refreshed = [p for p in await backend.list_players() if p.is_calibratable]
         after = await measure_once(
             backend,
@@ -264,6 +301,7 @@ async def calibrate(
             config=cfg,
             signal_url=signal_url,
             sleep=sleep,
+            progress=progress,
         )
         problems.extend(after.analysis.problems)
         if after.relative_spread_ms() > before.relative_spread_ms():
