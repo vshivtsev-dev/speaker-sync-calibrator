@@ -13,6 +13,7 @@ import pytest
 
 from sim.fake_ma import FakeMusicAssistant, SimulatedRecorder, VirtualClock, mixed_speakers
 from sim.virtual_room import RoomConfig, VirtualSpeaker
+from spinalign.calibration.profiles import Profile, apply_profile
 from spinalign.calibration.session import SessionConfig, calibrate, measure_once
 from spinalign.calibration.validate import determine_sign
 
@@ -136,6 +137,26 @@ async def test_silent_speaker_does_not_poison_the_others():
 
     assert "avr" not in measured.analysis.readings
     assert {"esp32", "bt"} <= set(measured.analysis.readings)
+
+
+async def test_a_saved_position_realigns_the_room_without_measuring_again():
+    """The whole point of profiles, checked acoustically rather than by
+    comparing numbers: apply a saved position to a system that has been reset,
+    then listen and confirm the speakers really are together again."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+    profile = Profile.from_report("диван", report)
+
+    for speaker in list(server.speakers):
+        await server.set_sync_adjust(speaker.player_id, 0)
+
+    await apply_profile(server, profile)
+
+    verified = await measure_once(
+        server, recorder, await server.list_players(), sleep=clock.sleep
+    )
+    latencies = list(verified.latencies_ms.values())
+    assert max(latencies) - min(latencies) < 3.0
 
 
 async def test_refuses_to_calibrate_a_single_speaker():

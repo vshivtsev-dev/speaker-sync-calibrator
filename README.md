@@ -117,6 +117,7 @@ spinalign serve
 | `SPINALIGN_MA_TOKEN` | needs the `CONFIG_PLAYERS_READ` / `WRITE` scopes |
 | `SPINALIGN_AUDIO_BASE_URL` | the app, as reachable **from Music Assistant** |
 | `SPINALIGN_ACCESS_TOKEN` | shared secret for the UI, API and socket |
+| `SPINALIGN_STATE_DIR` | saved positions and the probed sign; `/data` in the image |
 | `SPINALIGN_HOST` / `SPINALIGN_PORT` | bind address, default `0.0.0.0:8080` |
 
 `SPINALIGN_AUDIO_BASE_URL` is the one that catches people out, and it is
@@ -138,6 +139,24 @@ announcement command and a token there would land in MA's logs and queue. That
 route is a pure function of its query parameters, with no side effects and
 nothing about the system in its response.
 
+### Listening positions
+
+A calibration belongs to the spot the phone was standing in — the compensation
+covers the flight of sound through the room as well as the hardware, at about
+2.9 ms per metre. The sofa and the kitchen therefore want different
+corrections. Save each as a named position and switch between them with one
+click, no test tones.
+
+What a position stores is each speaker's *intrinsic* latency, not the finished
+correction. Applying one re-runs the solver over the speakers that are
+actually present, so a system that has since lost or gained a speaker gets a
+correct alignment rather than a replay of stale numbers.
+
+The same file remembers which way `sync_adjust` runs on your server, which is
+established by probing and costs two measurement passes — so
+`SPINALIGN_STATE_DIR` wants to be a volume. Without one, every restart forgets
+both.
+
 ### Docker
 
 ```bash
@@ -151,7 +170,7 @@ drop the labels. Either way the service port is `8080`.
 
 ## Status
 
-Complete and covered by 78 tests that need no hardware: Music Assistant sits
+Complete and covered by 114 tests that need no hardware: Music Assistant sits
 behind a narrow port, and a simulated room renders audio the detector
 genuinely has to measure.
 
@@ -172,8 +191,8 @@ the speaker cone is tested.
 ```
 src/spinalign/
   dsp/          signal generation, arrival detection, robust statistics
-  calibration/  round planning, measurement analysis, solver, sign probe
+  calibration/  round planning, analysis, solver, sign probe, saved positions
   ma/           the port, and the Music Assistant adapter behind it
-  web/          HTTPS UI, microphone capture, track endpoint
+  web/          UI, microphone capture, track endpoint, access token
 sim/            fake Music Assistant and a virtual room, for tests
 ```

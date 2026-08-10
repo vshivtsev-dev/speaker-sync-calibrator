@@ -6,7 +6,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     SPINALIGN_HOST=0.0.0.0 \
-    SPINALIGN_PORT=8080
+    SPINALIGN_PORT=8080 \
+    SPINALIGN_STATE_DIR=/data
 
 WORKDIR /app
 
@@ -14,9 +15,16 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 RUN pip install --no-cache-dir ".[ma]" \
-    && useradd --create-home --uid 10001 spinalign
+    && useradd --create-home --uid 10001 spinalign \
+    && mkdir -p /data \
+    && chown spinalign /data
 
 USER spinalign
+
+# Saved listening positions and the probed sync_adjust sign. Mount a volume
+# here: without one they are lost on every restart, and re-establishing the
+# sign costs two full measurement passes.
+VOLUME ["/data"]
 
 # Fixed inside the container; map it to whatever you like from outside. The
 # health check below and the Traefik service port both assume this value.

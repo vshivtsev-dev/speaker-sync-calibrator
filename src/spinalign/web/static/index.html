@@ -118,6 +118,30 @@
   .note.bad { border-color: var(--bad); color: var(--bad); }
   .note.warn { border-color: var(--warn); color: var(--warn); }
   .hidden { display: none; }
+
+  .saverow { display: flex; gap: 8px; margin-top: 14px; }
+  .saverow input {
+    flex: 1; min-width: 0;
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .saverow button { width: auto; flex: none; margin-top: 0; }
+
+  td.actions { white-space: nowrap; }
+  td.actions button {
+    width: auto; margin: 0 0 0 6px; padding: 6px 12px;
+    font-size: 13px; font-weight: 500;
+  }
+  .link {
+    background: none; border: 0; color: var(--muted);
+    padding: 6px 4px; width: auto; margin: 0 0 0 6px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .link:hover { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -156,6 +180,22 @@
     </div>
     <table id="corrections" style="margin-top:14px"></table>
     <div id="notes"></div>
+
+    <div class="saverow">
+      <input id="save-name" type="text" placeholder="Название позиции, например «диван»"
+             autocomplete="off" maxlength="60">
+      <button id="save" class="secondary">Сохранить</button>
+    </div>
+  </div>
+
+  <div class="card" id="profiles-card">
+    <h2>Позиции</h2>
+    <p class="note" style="margin-top:0">
+      Калибровка привязана к точке, где стоял телефон: компенсируется в том числе
+      путь звука по воздуху. Для дивана и кухни нужны разные поправки — сохранённую
+      позицию можно применить без нового замера.
+    </p>
+    <table id="profiles"></table>
   </div>
 </main>
 <script src="/static/app.js"></script>

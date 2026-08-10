@@ -16,8 +16,14 @@ import aiohttp
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from sim.fake_ma import FakeMusicAssistant, VirtualClock, mixed_speakers
-from spinalign.calibration.session import SessionConfig
+from sim.fake_ma import (
+    FakeMusicAssistant,
+    SimulatedRecorder,
+    VirtualClock,
+    mixed_speakers,
+)
+from spinalign.calibration.profiles import ProfileStore
+from spinalign.calibration.session import SessionConfig, calibrate
 from spinalign.web.app import TOKEN_COOKIE, AppState, create_app, serve
 
 TOKEN = "s3cret-token"
@@ -268,6 +274,130 @@ async def test_websocket_accepts_the_cookie_from_the_login_redirect(guarded):
         await socket.close()
     finally:
         await client.close()
+
+
+# ----------------------------------------------------------------- profiles
+
+
+def with_store(state, tmp_path):
+    state.adopt_store(ProfileStore.open(tmp_path))
+    return state
+
+
+async def test_profiles_start_empty_and_cannot_be_saved_yet(state, tmp_path):
+    client = await client_for(create_app(with_store(state, tmp_path)))
+    try:
+        payload = await (await client.get("/api/profiles")).json()
+    finally:
+        await client.close()
+
+    assert payload["profiles"] == []
+    assert payload["can_save"] is False
+
+
+async def test_saving_without_a_calibration_is_refused(state, tmp_path):
+    """There is nothing to save until a run has produced a result."""
+    client = await client_for(create_app(with_store(state, tmp_path)))
+    try:
+        response = await client.post("/api/profiles", json={"name": "диван"})
+    finally:
+        await client.close()
+
+    assert response.status == 400
+
+
+async def test_a_position_can_be_saved_applied_and_deleted(state, tmp_path):
+    server = state.backend
+    with_store(state, tmp_path)
+    state.last_report = await calibrate(
+        server, SimulatedRecorder(server), sleep=server.clock.sleep
+    )
+
+    client = await client_for(create_app(state))
+    try:
+        created = await client.post("/api/profiles", json={"name": "диван"})
+        listed = await (await client.get("/api/profiles")).json()
+
+        for speaker in list(server.speakers):
+            await server.set_sync_adjust(speaker.player_id, 0)
+        applied = await (await client.post("/api/profiles/диван/apply")).json()
+
+        removed = await client.delete("/api/profiles/диван")
+        after = await (await client.get("/api/profiles")).json()
+    finally:
+        await client.close()
+
+    assert created.status == 201
+    assert [p["name"] for p in listed["profiles"]] == ["диван"]
+    assert listed["can_save"] is True
+
+    # Re-applying restores what the calibration had written.
+    assert {a["player_id"] for a in applied["applied"]} == {"esp32", "avr"}
+    assert not applied["problems"]
+
+    assert removed.status == 204
+    assert after["profiles"] == []
+
+
+async def test_an_unnamed_position_is_refused(state, tmp_path):
+    server = state.backend
+    with_store(state, tmp_path)
+    state.last_report = await calibrate(
+        server, SimulatedRecorder(server), sleep=server.clock.sleep
+    )
+
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/profiles", json={"name": "   "})
+    finally:
+        await client.close()
+
+    assert response.status == 400
+
+
+async def test_applying_or_deleting_something_absent_is_a_404(state, tmp_path):
+    client = await client_for(create_app(with_store(state, tmp_path)))
+    try:
+        assert (await client.post("/api/profiles/нет/apply")).status == 404
+        assert (await client.delete("/api/profiles/нет")).status == 404
+    finally:
+        await client.close()
+
+
+async def test_profiles_are_unavailable_without_a_state_directory(state):
+    """Better an explicit "not configured" than silently accepting a save that
+    disappears with the process."""
+    client = await client_for(create_app(state))
+    try:
+        assert (await client.get("/api/profiles")).status == 503
+    finally:
+        await client.close()
+
+
+async def test_profile_routes_are_behind_the_token(guarded, tmp_path):
+    client = await client_for(create_app(with_store(guarded, tmp_path)))
+    try:
+        assert (await client.get("/api/profiles")).status == 401
+        assert (await client.post("/api/profiles", json={"name": "x"})).status == 401
+        assert (await client.post("/api/profiles/x/apply")).status == 401
+        assert (await client.delete("/api/profiles/x")).status == 401
+    finally:
+        await client.close()
+
+
+async def test_the_probed_sign_is_taken_from_the_store(state, tmp_path):
+    store = ProfileStore.open(tmp_path)
+    store.remember_sign(-1, checked=True)
+    state.adopt_store(store)
+
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    assert payload["sign"] == -1
+    assert payload["sign_checked"] is True
 
 
 # ------------------------------------------------------------------ startup

@@ -46,6 +46,16 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("SPINALIGN_ACCESS_TOKEN"),
         help="shared secret protecting the UI, API and socket  [SPINALIGN_ACCESS_TOKEN]",
     )
+    serve.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(os.environ.get("SPINALIGN_STATE_DIR", Path.home() / ".spinalign")),
+        help=(
+            "where saved positions and the probed sync_adjust sign live; needs "
+            "to be a volume in a container or both are lost on restart "
+            "[SPINALIGN_STATE_DIR]"
+        ),
+    )
     serve.add_argument("--host", default=os.environ.get("SPINALIGN_HOST", "0.0.0.0"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("SPINALIGN_PORT", "8080")))
 
@@ -103,6 +113,15 @@ async def _serve(args) -> int:
         audio_base_url=args.audio_base_url.rstrip("/"),
         access_token=args.access_token or None,
     )
+
+    from spinalign.calibration.profiles import ProfileStore
+
+    try:
+        state.adopt_store(ProfileStore.open(args.state_dir))
+    except OSError as error:
+        print(f"Cannot use state directory {args.state_dir}: {error}", file=sys.stderr)
+        return 1
+
     await serve(state, host=args.host, port=args.port)
     return 0
 

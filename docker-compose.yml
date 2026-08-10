@@ -25,6 +25,12 @@ services:
       # start a calibration — loud test tones and rewritten sync_adjust.
       SPINALIGN_ACCESS_TOKEN: ${SPINALIGN_ACCESS_TOKEN:?generate one, e.g. openssl rand -hex 24}
 
+    volumes:
+      # Saved listening positions and the probed sync_adjust sign. Without
+      # this they are lost on every restart, and re-establishing the sign
+      # costs two full measurement passes.
+      - spinalign-state:/data
+
     networks:
       - dokploy-network
 
@@ -34,6 +40,9 @@ services:
       - traefik.http.routers.spinalign.entrypoints=websecure
       - traefik.http.routers.spinalign.tls.certresolver=letsencrypt
       - traefik.http.services.spinalign.loadbalancer.server.port=8080
+
+volumes:
+  spinalign-state:
 
 networks:
   dokploy-network:

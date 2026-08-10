@@ -110,6 +110,8 @@ function handle(message) {
       showReport(message);
       setBusy(false);
       refreshPlayers();
+      // A result now exists, so saving it as a position becomes possible.
+      refreshProfiles();
       break;
 
     case 'error':
@@ -213,6 +215,88 @@ function showReport(report) {
             report.improved ? 'ok' : 'err');
 }
 
+// ----------------------------------------------------------------- profiles
+
+async function refreshProfiles() {
+  const response = await fetch('/api/profiles');
+  if (!response.ok) {
+    // No state directory configured: the feature is simply off.
+    el('profiles-card').classList.add('hidden');
+    return;
+  }
+
+  const data = await response.json();
+  el('profiles-card').classList.remove('hidden');
+  el('save').disabled = !data.can_save;
+
+  if (!data.profiles.length) {
+    el('profiles').innerHTML =
+      '<tbody><tr><td>Пока ничего не сохранено</td></tr></tbody>';
+    return;
+  }
+
+  el('profiles').innerHTML = '<tbody>' + data.profiles.map((p) => `
+    <tr>
+      <td>${escapeHtml(p.name)}<br><span class="pill">${p.speakers} колонки</span></td>
+      <td class="actions">
+        <button data-apply="${escapeAttr(p.name)}">Применить</button>
+        <button class="link" data-delete="${escapeAttr(p.name)}">Удалить</button>
+      </td>
+    </tr>`).join('') + '</tbody>';
+}
+
+async function applyProfile(name) {
+  setBusy(true);
+  setStatus(`Применяю «${name}»…`, 'live');
+  try {
+    const response = await fetch(`/api/profiles/${encodeURIComponent(name)}/apply`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error(await response.text());
+
+    const result = await response.json();
+    const written = result.applied.length;
+    setStatus(
+      result.problems.length
+        ? `Применено (${written}), но: ${result.problems.join('; ')}`
+        : `Позиция «${name}» применена, изменено колонок: ${written}.`,
+      result.problems.length ? 'err' : 'ok',
+    );
+  } catch (error) {
+    setStatus('Не удалось применить: ' + error.message, 'err');
+  } finally {
+    setBusy(false);
+    refreshPlayers();
+  }
+}
+
+async function saveProfile() {
+  const name = el('save-name').value.trim();
+  if (!name) return;
+
+  const response = await fetch('/api/profiles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (response.ok) {
+    el('save-name').value = '';
+    setStatus(`Позиция «${name}» сохранена.`, 'ok');
+    refreshProfiles();
+  } else {
+    setStatus('Не сохранилось: ' + (await response.text()), 'err');
+  }
+}
+
+async function deleteProfile(name) {
+  await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  refreshProfiles();
+}
+
+function escapeAttr(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
 function escapeHtml(value) {
   const node = document.createElement('span');
   node.textContent = String(value);
@@ -236,6 +320,17 @@ async function start(kind) {
 
 el('run').addEventListener('click', () => start('calibrate'));
 el('probe').addEventListener('click', () => start('probe_sign'));
+el('save').addEventListener('click', saveProfile);
+
+// Delegated so the list can be re-rendered without rebinding every row.
+el('profiles').addEventListener('click', (event) => {
+  const apply = event.target.closest('[data-apply]');
+  if (apply) return applyProfile(apply.dataset.apply);
+
+  const remove = event.target.closest('[data-delete]');
+  if (remove) return deleteProfile(remove.dataset.delete);
+});
 
 refreshPlayers();
+refreshProfiles();
 connect();

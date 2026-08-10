@@ -29,6 +29,7 @@ from urllib.parse import urlencode
 import numpy as np
 from aiohttp import WSMsgType, web
 
+from spinalign.calibration.profiles import Profile, ProfileStore, apply_profile
 from spinalign.calibration.session import (
     CalibrationReport,
     SessionConfig,
@@ -75,12 +76,35 @@ class AppState:
     """Shared secret for the UI, API and WebSocket. ``None`` disables the
     check, which is what local development and the simulator run with."""
 
+    store: ProfileStore | None = None
+    """Saved listening positions, and the remembered sign convention.
+
+    Optional so tests and the simulator can run without touching disk; when it
+    is absent the profile routes report themselves unavailable rather than
+    pretending to save.
+    """
+
     sign: int = 1
     sign_checked: bool = False
     busy: bool = False
+    last_report: CalibrationReport | None = None
+    """Kept so a position can be named and saved *after* its result is on
+    screen, rather than having to be named before the run starts."""
 
     def signal_url(self, signal: TestSignal) -> str:
         return f"{self.audio_base_url}/signal.wav?chirps={signal.chirp_count}"
+
+    def adopt_store(self, store: ProfileStore) -> None:
+        """Attach a store and take its remembered sign as the starting point."""
+        self.store = store
+        self.sign = store.sign
+        self.sign_checked = store.sign_checked
+
+    def remember_sign(self, sign: int, checked: bool) -> None:
+        self.sign = sign
+        self.sign_checked = checked
+        if self.store is not None:
+            self.store.remember_sign(sign, checked)
 
 
 class BrowserRecorder:
@@ -250,13 +274,86 @@ def create_app(state: AppState) -> web.Application:
             headers={"Cache-Control": "no-store"},
         )
 
+    def store() -> ProfileStore:
+        if state.store is None:
+            raise web.HTTPServiceUnavailable(
+                text="No state directory configured, so positions cannot be saved.",
+                content_type="text/plain",
+            )
+        return state.store
+
+    async def profiles_list(_: web.Request) -> web.Response:
+        return web.json_response(
+            {
+                "profiles": [_describe_profile(p) for p in store().list()],
+                "can_save": state.last_report is not None,
+            }
+        )
+
+    async def profiles_save(request: web.Request) -> web.Response:
+        if state.last_report is None:
+            raise web.HTTPBadRequest(
+                text="Nothing to save yet — run a calibration first.",
+                content_type="text/plain",
+            )
+        payload = await request.json()
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise web.HTTPBadRequest(text="A position needs a name.", content_type="text/plain")
+
+        profile = store().save(Profile.from_report(name, state.last_report))
+        return web.json_response({"profile": _describe_profile(profile)}, status=201)
+
+    async def profiles_apply(request: web.Request) -> web.Response:
+        if state.busy:
+            raise web.HTTPConflict(text="A measurement is running.", content_type="text/plain")
+
+        profile = store().get(request.match_info["name"])
+        if profile is None:
+            raise web.HTTPNotFound(text="No such position.", content_type="text/plain")
+
+        state.busy = True
+        try:
+            outcome = await apply_profile(state.backend, profile)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error), content_type="text/plain") from error
+        finally:
+            state.busy = False
+
+        return web.json_response(
+            {
+                "applied": [{"player_id": pid, "sync_adjust_ms": ms} for pid, ms in outcome.applied],
+                "problems": list(outcome.problems),
+                "spread_after_ms": round(outcome.solution.spread_after_ms, 1),
+            }
+        )
+
+    async def profiles_delete(request: web.Request) -> web.Response:
+        if not store().delete(request.match_info["name"]):
+            raise web.HTTPNotFound(text="No such position.", content_type="text/plain")
+        return web.Response(status=204)
+
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/api/players", players)
+    app.router.add_get("/api/profiles", profiles_list)
+    app.router.add_post("/api/profiles", profiles_save)
+    app.router.add_post("/api/profiles/{name}/apply", profiles_apply)
+    app.router.add_delete("/api/profiles/{name}", profiles_delete)
     app.router.add_get("/signal.wav", signal_wav)
     app.router.add_get("/ws", _websocket_handler)
     app.router.add_static("/static/", STATIC_DIR)
     return app
+
+
+def _describe_profile(profile: Profile) -> dict:
+    return {
+        "name": profile.name,
+        "saved_at": profile.saved_at,
+        "speakers": len(profile.speakers),
+        "spread_before_ms": profile.spread_before_ms,
+        "spread_after_ms": profile.spread_after_ms,
+    }
 
 
 async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
@@ -327,8 +424,7 @@ async def _run_job(
                 config=state.session_config,
                 signal_url=state.signal_url,
             )
-            state.sign = check.sign
-            state.sign_checked = check.conclusive
+            state.remember_sign(check.sign, check.conclusive)
             outbox.put_nowait(
                 {
                     "type": "sign",
@@ -348,6 +444,7 @@ async def _run_job(
             sign=state.sign,
             progress=lambda event: progress({"type": "progress", **event}),
         )
+        state.last_report = report
         outbox.put_nowait({"type": "report", **describe(report)})
     except Exception as error:  # surfaced to the user rather than swallowed
         logger.exception("calibration failed")
@@ -405,6 +502,12 @@ async def serve(
 
     print(f"  listening on http://{host}:{port} (put TLS in front of it)")
     print(f"  Music Assistant will fetch {state.audio_base_url}/signal.wav")
+    if state.store is not None:
+        saved = len(state.store.list())
+        print(f"  state in {state.store.path} ({saved} saved position(s))")
+    else:
+        print("  WARNING: no state directory, so positions and the probed sign")
+        print("           are forgotten when this process stops.")
     if state.access_token:
         print("  open the UI once with ?token=… — it is then stored in a cookie")
     else:
