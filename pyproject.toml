@@ -14,7 +14,6 @@ dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
     "aiohttp>=3.9",
-    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

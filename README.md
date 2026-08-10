@@ -95,34 +95,77 @@ Calibrating …
 
 ## Run it for real
 
+The app speaks plain HTTP on one port and expects a reverse proxy in front of
+it. That is not a limitation but the point: browsers only grant microphone
+access in a secure context, so the phone needs a trusted `https://` origin,
+and a certificate issued by the proxy beats one the user has to click past.
+
 ```bash
 pip install -e ".[ma]"
-spinalign serve --ma-url http://192.168.1.10:8095 --token <token>
+
+export SPINALIGN_MA_URL=http://192.168.1.10:8095
+export SPINALIGN_MA_TOKEN=<token with CONFIG_PLAYERS_READ/WRITE>
+export SPINALIGN_AUDIO_BASE_URL=http://192.168.1.20:8080
+export SPINALIGN_ACCESS_TOKEN=$(openssl rand -hex 24)
+
+spinalign serve
 ```
 
-The token needs the `CONFIG_PLAYERS_READ` and `CONFIG_PLAYERS_WRITE` scopes.
-Then open the printed `https://…` address **on the phone you will use as the
-microphone**, accept the certificate warning once, and press *Калибровать*.
+| Variable | What it is |
+| --- | --- |
+| `SPINALIGN_MA_URL` | Music Assistant, as reachable **from the app** |
+| `SPINALIGN_MA_TOKEN` | needs the `CONFIG_PLAYERS_READ` / `WRITE` scopes |
+| `SPINALIGN_AUDIO_BASE_URL` | the app, as reachable **from Music Assistant** |
+| `SPINALIGN_ACCESS_TOKEN` | shared secret for the UI, API and socket |
+| `SPINALIGN_HOST` / `SPINALIGN_PORT` | bind address, default `0.0.0.0:8080` |
 
-Two listeners are started, and both are needed:
+`SPINALIGN_AUDIO_BASE_URL` is the one that catches people out, and it is
+required rather than guessed. It is *not* the address the browser uses — it is
+how Music Assistant reaches back to fetch the test track, which in a container
+is a service name or the host's LAN address, never the bridge address the app
+would otherwise infer. Guessing it wrong fails halfway through a calibration
+with every speaker muted; requiring it fails at startup.
 
-- **HTTPS** for the UI, because browsers only grant microphone access in a
-  secure context and a LAN IP is not one;
-- **plain HTTP** for the test track, because the client fetching it is Music
-  Assistant, which a self-signed certificate would only obstruct.
+Open the public address once with `?token=…`. The token is exchanged for an
+`HttpOnly` cookie and stripped from the URL — a cookie rather than a header
+because a browser cannot set headers on a WebSocket handshake but does send
+cookies with one, so the same login covers the UI, the API and the audio
+upload socket.
+
+Two routes stay open deliberately: `/healthz`, for container and proxy checks,
+and `/signal.wav`, because Music Assistant fetches it with a bare URL from its
+announcement command and a token there would land in MA's logs and queue. That
+route is a pure function of its query parameters, with no side effects and
+nothing about the system in its response.
+
+### Docker
+
+```bash
+cp .env.example .env   # fill in the four variables above
+docker compose up -d --build
+```
+
+`docker-compose.yml` carries Traefik router labels as an example; Dokploy can
+set them from its own UI instead, in which case keep the environment block and
+drop the labels. Either way the service port is `8080`.
 
 ## Status
 
-The DSP core, the solver, the session orchestration and the web layer are
-complete and covered by 60 tests that need no hardware — Music Assistant sits
+Complete and covered by 78 tests that need no hardware: Music Assistant sits
 behind a narrow port, and a simulated room renders audio the detector
 genuinely has to measure.
 
-Not yet exercised against a live server: the exact command strings for
-listing players, muting, grouping and stopping. They are collected in
-`COMMANDS` in `src/spinalign/ma/client.py` with a `verified` flag each, and
-`spinalign serve` checks them against the server's own `/api-docs` at startup
-and refuses to run rather than failing halfway through a session.
+The adapter goes through `music-assistant-client`'s own typed controllers
+rather than hand-written command strings, so the library is the authority on
+what things are called. Two of its details are easy to get wrong and are
+pinned by tests: `send_command` waits on a future that only the read loop
+inside `start_listening` resolves, so an adapter that merely connects hangs on
+its first call rather than failing; and `play_announcement` plays a chime
+before the audio unless told not to, which would put unknown sound at an
+unknown time right where the measurement starts.
+
+Still unexercised against live hardware: the real acoustics. Everything up to
+the speaker cone is tested.
 
 ## Layout
 

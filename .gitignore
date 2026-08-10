@@ -10,6 +10,8 @@ dist/
 .coverage
 htmlcov/
 
-# Generated at runtime: self-signed TLS cert and saved calibration profiles.
+# Generated at runtime: saved calibration profiles.
 /.spinalign/
-*.pem
+
+# Local deployment secrets; .env.example is the template that is tracked.
+.env

@@ -1,0 +1,23 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.ruff_cache
+build
+dist
+htmlcov
+.coverage
+
+# Development only: the simulator and its tests are not part of the shipped
+# package, and `spinalign simulate` is a source-checkout tool.
+tests
+sim
+conftest.py
+
+*.pem
+.spinalign
+docker-compose.yml

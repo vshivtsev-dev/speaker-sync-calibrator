@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -17,13 +18,36 @@ def main(argv: list[str] | None = None) -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
+    # Every option also reads an environment variable, because a container
+    # platform sets those rather than assembling a command line. An explicit
+    # flag still wins.
     serve = commands.add_parser("serve", help="run the web UI against a Music Assistant server")
-    serve.add_argument("--ma-url", required=True, help="e.g. http://192.168.1.10:8095")
-    serve.add_argument("--token", default=None, help="token with CONFIG_PLAYERS_READ/WRITE")
-    serve.add_argument("--host", default="0.0.0.0")
-    serve.add_argument("--ui-port", type=int, default=8443)
-    serve.add_argument("--audio-port", type=int, default=8444)
-    serve.add_argument("--cert-dir", type=Path, default=None)
+    serve.add_argument(
+        "--ma-url",
+        default=os.environ.get("SPINALIGN_MA_URL"),
+        help="Music Assistant, e.g. http://192.168.1.10:8095  [SPINALIGN_MA_URL]",
+    )
+    serve.add_argument(
+        "--token",
+        default=os.environ.get("SPINALIGN_MA_TOKEN"),
+        help="Music Assistant token with CONFIG_PLAYERS_READ/WRITE  [SPINALIGN_MA_TOKEN]",
+    )
+    serve.add_argument(
+        "--audio-base-url",
+        default=os.environ.get("SPINALIGN_AUDIO_BASE_URL"),
+        help=(
+            "where MUSIC ASSISTANT reaches this app to fetch the test track — "
+            "a Docker service name or the host's LAN address, not the browser's "
+            "address  [SPINALIGN_AUDIO_BASE_URL]"
+        ),
+    )
+    serve.add_argument(
+        "--access-token",
+        default=os.environ.get("SPINALIGN_ACCESS_TOKEN"),
+        help="shared secret protecting the UI, API and socket  [SPINALIGN_ACCESS_TOKEN]",
+    )
+    serve.add_argument("--host", default=os.environ.get("SPINALIGN_HOST", "0.0.0.0"))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("SPINALIGN_PORT", "8080")))
 
     simulate = commands.add_parser(
         "simulate", help="run a full calibration against a simulated room (no hardware)"
@@ -47,8 +71,21 @@ def main(argv: list[str] | None = None) -> int:
 
 
 async def _serve(args) -> int:
-    from spinalign.ma.client import MusicAssistantBackend, unverified_commands
+    from spinalign.ma.client import MusicAssistantBackend
     from spinalign.web.app import AppState, serve
+
+    missing_config = [
+        name
+        for name, value in (
+            ("--ma-url / SPINALIGN_MA_URL", args.ma_url),
+            ("--audio-base-url / SPINALIGN_AUDIO_BASE_URL", args.audio_base_url),
+        )
+        if not value
+    ]
+    if missing_config:
+        for name in missing_config:
+            print(f"Missing required setting: {name}", file=sys.stderr)
+        return 2
 
     print(f"Connecting to Music Assistant at {args.ma_url} …")
     try:
@@ -57,31 +94,16 @@ async def _serve(args) -> int:
         print(f"Could not connect: {error}", file=sys.stderr)
         return 1
 
-    missing = await backend.check_commands()
-    if missing:
-        print("\nThis server does not expose these commands:", file=sys.stderr)
-        for name in missing:
-            print(f"  - {name}", file=sys.stderr)
-        print("Check them against " + args.ma_url.rstrip("/") + "/api-docs", file=sys.stderr)
-        return 1
-
-    still_unverified = unverified_commands()
-    if still_unverified:
-        print("Commands not yet exercised against live hardware:")
-        for name in still_unverified:
-            print(f"  - {name}")
-
     players = [p for p in await backend.list_players() if p.is_calibratable]
     print(f"Found {len(players)} calibratable Sendspin player(s).\n")
 
-    state = AppState(backend=backend, session_config=SessionConfig())
-    await serve(
-        state,
-        host=args.host,
-        ui_port=args.ui_port,
-        audio_port=args.audio_port,
-        cert_dir=args.cert_dir,
+    state = AppState(
+        backend=backend,
+        session_config=SessionConfig(),
+        audio_base_url=args.audio_base_url.rstrip("/"),
+        access_token=args.access_token or None,
     )
+    await serve(state, host=args.host, port=args.port)
     return 0
 
 

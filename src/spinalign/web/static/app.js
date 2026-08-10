@@ -4,7 +4,11 @@
 // render what the server sends back. All measurement happens server-side.
 
 const el = (id) => document.getElementById(id);
-const socketUrl = `wss://${location.host}/ws`;
+
+// Match the page's own scheme: wss behind the TLS-terminating proxy, ws when
+// developing against http://localhost (which browsers count as a secure
+// context, so the microphone still works there).
+const socketUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 
 let socket = null;
 let audio = null;      // AudioContext

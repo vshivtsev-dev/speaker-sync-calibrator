@@ -1,15 +1,18 @@
 """The web layer: a phone holds the microphone, this holds everything else.
 
-Two listeners, for two different clients:
+Plain HTTP on a single port. TLS is a reverse proxy's job — the app is meant
+to sit behind Traefik, which terminates with a real certificate. That matters
+more than it sounds: browsers only grant ``getUserMedia`` in a secure context,
+so a phone needs a trusted ``https://`` origin, and a properly issued one from
+the proxy beats a self-signed certificate the user has to click past.
 
-* **HTTPS** serves the UI. Browsers refuse ``getUserMedia`` outside a secure
-  context, and a LAN IP is not one, so the UI has to be TLS even though
-  nothing here wants encryption.
-* **plain HTTP** serves the test track, because the fetcher is Music Assistant
-  and a self-signed certificate would only get in its way.
+Two routes stay deliberately unauthenticated, and both have a reason:
 
-The track URL carries its own parameters, so the audio route stays stateless
-and a request can be replayed or debugged on its own.
+* ``/signal.wav`` is fetched by Music Assistant itself, and its announcement
+  command takes a bare URL — a token there would leak into MA's logs and
+  queue. The route is a pure function of its query parameters, with no side
+  effects and nothing about the system in its response.
+* ``/healthz`` is for the container and proxy health checks.
 """
 
 from __future__ import annotations
@@ -18,8 +21,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlencode
 
 import numpy as np
 from aiohttp import WSMsgType, web
@@ -32,10 +37,13 @@ from spinalign.calibration.session import (
 from spinalign.calibration.validate import determine_sign
 from spinalign.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
 from spinalign.ma.backend import SpeakerBackend
-from spinalign.web.certs import local_addresses, ssl_context
 
 STATIC_DIR = Path(__file__).parent / "static"
 RECORDING_TIMEOUT_SECONDS = 30.0
+
+TOKEN_COOKIE = "spinalign_token"
+TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
+OPEN_PATHS = frozenset({"/signal.wav", "/healthz"})
 
 logger = logging.getLogger("spinalign.web")
 
@@ -47,7 +55,18 @@ class AppState:
     backend: SpeakerBackend
     session_config: SessionConfig = field(default_factory=SessionConfig)
     audio_base_url: str = ""
-    """How Music Assistant reaches our plain-HTTP track endpoint."""
+    """How **Music Assistant** reaches our track endpoint.
+
+    Deliberately not guessed. Inside a container the obvious guess is the
+    bridge address, which Music Assistant often cannot route to, and the
+    failure would surface halfway through a session with every speaker muted
+    rather than at startup. This is a different address from the one the phone
+    uses to reach the UI, which arrives via the proxy.
+    """
+
+    access_token: str | None = None
+    """Shared secret for the UI, API and WebSocket. ``None`` disables the
+    check, which is what local development and the simulator run with."""
 
     sign: int = 1
     sign_checked: bool = False
@@ -101,9 +120,98 @@ class BrowserRecorder:
         self._complete.set()
 
 
-def create_audio_app(state: AppState) -> web.Application:
-    """Plain HTTP, one route: the test track Music Assistant will fetch."""
-    app = web.Application()
+def _supplied_token(request: web.Request) -> str | None:
+    """Read the token from wherever this particular client can put it."""
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "):
+        return header[len("Bearer ") :]
+    if "token" in request.query:
+        return request.query["token"]
+    return request.cookies.get(TOKEN_COOKIE)
+
+
+def _is_secure(request: web.Request) -> bool:
+    forwarded = request.headers.get("X-Forwarded-Proto", "")
+    return forwarded.split(",")[0].strip() == "https" or request.scheme == "https"
+
+
+def _redirect_without_token(request: web.Request, token: str) -> web.HTTPFound:
+    """Park the token in a cookie and send the browser to a clean URL.
+
+    A cookie rather than a header because a browser cannot set headers on a
+    WebSocket handshake but does send cookies with it — so the same login
+    covers the UI, the API and the audio upload socket with no special case on
+    the client. Stripping the token from the URL keeps it out of the address
+    bar, history and any referrer.
+    """
+    remaining = {k: v for k, v in request.query.items() if k != "token"}
+    target = request.path + (f"?{urlencode(remaining)}" if remaining else "")
+
+    response = web.HTTPFound(target)
+    response.set_cookie(
+        TOKEN_COOKIE,
+        token,
+        max_age=TOKEN_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+        secure=_is_secure(request),
+        path="/",
+    )
+    return response
+
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler):
+    state: AppState = request.app[STATE]
+    expected = state.access_token
+
+    if not expected or request.path in OPEN_PATHS:
+        return await handler(request)
+
+    supplied = _supplied_token(request)
+    if supplied is None or not secrets.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8")
+    ):
+        raise web.HTTPUnauthorized(
+            text="Access token required. Open this address with ?token=… once.",
+            content_type="text/plain",
+        )
+
+    if "token" in request.query:
+        raise _redirect_without_token(request, expected)
+    return await handler(request)
+
+
+def create_app(state: AppState) -> web.Application:
+    """The whole surface on one port: UI, API, socket, track, health."""
+    app = web.Application(middlewares=[auth_middleware])
+    app[STATE] = state
+
+    async def index(_: web.Request) -> web.Response:
+        return web.FileResponse(STATIC_DIR / "index.html")
+
+    async def healthz(_: web.Request) -> web.Response:
+        return web.json_response({"status": "ok"})
+
+    async def players(_: web.Request) -> web.Response:
+        found = await state.backend.list_players()
+        return web.json_response(
+            {
+                "players": [
+                    {
+                        "player_id": p.player_id,
+                        "name": p.name,
+                        "provider": p.provider,
+                        "available": p.available,
+                        "sync_adjust_ms": p.sync_adjust_ms,
+                        "calibratable": p.is_calibratable,
+                    }
+                    for p in found
+                ],
+                "sign": state.sign,
+                "sign_checked": state.sign_checked,
+            }
+        )
 
     async def signal_wav(request: web.Request) -> web.Response:
         try:
@@ -128,39 +236,10 @@ def create_audio_app(state: AppState) -> web.Application:
             headers={"Cache-Control": "no-store"},
         )
 
-    app.router.add_get("/signal.wav", signal_wav)
-    return app
-
-
-def create_ui_app(state: AppState) -> web.Application:
-    app = web.Application()
-    app[STATE] = state
-
-    async def index(_: web.Request) -> web.Response:
-        return web.FileResponse(STATIC_DIR / "index.html")
-
-    async def players(_: web.Request) -> web.Response:
-        found = await state.backend.list_players()
-        return web.json_response(
-            {
-                "players": [
-                    {
-                        "player_id": p.player_id,
-                        "name": p.name,
-                        "provider": p.provider,
-                        "available": p.available,
-                        "sync_adjust_ms": p.sync_adjust_ms,
-                        "calibratable": p.is_calibratable,
-                    }
-                    for p in found
-                ],
-                "sign": state.sign,
-                "sign_checked": state.sign_checked,
-            }
-        )
-
     app.router.add_get("/", index)
+    app.router.add_get("/healthz", healthz)
     app.router.add_get("/api/players", players)
+    app.router.add_get("/signal.wav", signal_wav)
     app.router.add_get("/ws", _websocket_handler)
     app.router.add_static("/static/", STATIC_DIR)
     return app
@@ -295,33 +374,30 @@ async def serve(
     state: AppState,
     *,
     host: str = "0.0.0.0",
-    ui_port: int = 8443,
-    audio_port: int = 8444,
-    cert_dir: Path | None = None,
+    port: int = 8080,
 ) -> None:
-    """Run both listeners until cancelled."""
-    directory = cert_dir or Path.home() / ".spinalign"
-
+    """Run the app until cancelled. TLS belongs to the reverse proxy."""
     if not state.audio_base_url:
-        reachable = next((a for a in local_addresses() if a != "127.0.0.1"), "127.0.0.1")
-        state.audio_base_url = f"http://{reachable}:{audio_port}"
+        raise ValueError(
+            "audio_base_url is not set. It must be the address Music Assistant "
+            "can reach this app on — a service name on the Docker network, or "
+            "the host's LAN address — not the address the browser uses. "
+            "Set SPINALIGN_AUDIO_BASE_URL or pass --audio-base-url."
+        )
 
-    audio_runner = web.AppRunner(create_audio_app(state))
-    await audio_runner.setup()
-    await web.TCPSite(audio_runner, host, audio_port).start()
+    runner = web.AppRunner(create_app(state))
+    await runner.setup()
+    await web.TCPSite(runner, host, port).start()
 
-    ui_runner = web.AppRunner(create_ui_app(state))
-    await ui_runner.setup()
-    await web.TCPSite(ui_runner, host, ui_port, ssl_context=ssl_context(directory)).start()
-
-    for address in local_addresses():
-        print(f"  UI:    https://{address}:{ui_port}")
-    print(f"  track: {state.audio_base_url}/signal.wav")
-    print("\nOpen the UI on the phone you will use as the microphone.")
-    print("The certificate is self-signed, so accept the warning once.")
+    print(f"  listening on http://{host}:{port} (put TLS in front of it)")
+    print(f"  Music Assistant will fetch {state.audio_base_url}/signal.wav")
+    if state.access_token:
+        print("  open the UI once with ?token=… — it is then stored in a cookie")
+    else:
+        print("  WARNING: no access token set, anyone who reaches this can run a")
+        print("           calibration. Set SPINALIGN_ACCESS_TOKEN when exposing it.")
 
     try:
         await asyncio.Event().wait()
     finally:
-        await ui_runner.cleanup()
-        await audio_runner.cleanup()
+        await runner.cleanup()
