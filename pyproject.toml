@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spinalign"
+version = "0.1.0"
+description = "Acoustic latency calibration for Music Assistant / Sendspin multi-room speakers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+# The Music Assistant client is only needed to talk to a real server; the DSP
+# core, the solver and the whole synthetic test suite run without it.
+ma = ["music-assistant-client>=1.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+spinalign = "spinalign.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+spinalign = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SpinAlign</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --muted: #666d7a;
+    --line: #e2e5ea;
+    --accent: #2f6df6;
+    --good: #1a8a52;
+    --warn: #b26a00;
+    --bad: #c0392b;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel: #1c1f25;
+      --ink: #e8eaed;
+      --muted: #9aa3b0;
+      --line: #2b3038;
+      --accent: #6f9bff;
+      --good: #47c78a;
+      --warn: #e0a33a;
+      --bad: #ef6f60;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+
+  button {
+    font: inherit;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: 0;
+    border-radius: 10px;
+    padding: 13px 18px;
+    width: 100%;
+    cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--line);
+    margin-top: 8px;
+    font-weight: 500;
+    padding: 10px 14px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: right; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 20px;
+    background: var(--line);
+    color: var(--muted);
+  }
+  .pill.on { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .pill.off { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+
+  .status { display: flex; align-items: center; gap: 10px; min-height: 22px; }
+  .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); flex: none;
+  }
+  .dot.live { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  .dot.ok { background: var(--good); }
+  .dot.err { background: var(--bad); }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .bar { height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .35s ease; }
+
+  .headline { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .headline.good { color: var(--good); }
+  .headline.bad { color: var(--bad); }
+  .arrow { color: var(--muted); font-weight: 400; font-size: 18px; padding: 0 6px; }
+
+  .note {
+    font-size: 13px; color: var(--muted);
+    border-left: 2px solid var(--line); padding-left: 10px; margin-top: 10px;
+  }
+  .note.bad { border-color: var(--bad); color: var(--bad); }
+  .note.warn { border-color: var(--warn); color: var(--warn); }
+  .hidden { display: none; }
+
+  .saverow { display: flex; gap: 8px; margin-top: 14px; }
+  .saverow input {
+    flex: 1; min-width: 0;
+    font: inherit;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .saverow button { width: auto; flex: none; margin-top: 0; }
+
+  td.actions { white-space: nowrap; }
+  td.actions button {
+    width: auto; margin: 0 0 0 6px; padding: 6px 12px;
+    font-size: 13px; font-weight: 500;
+  }
+  .link {
+    background: none; border: 0; color: var(--muted);
+    padding: 6px 4px; width: auto; margin: 0 0 0 6px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .link:hover { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>SpinAlign</h1>
+  <p class="sub">Выравнивание задержек колонок по микрофону телефона</p>
+
+  <div class="card">
+    <h2>Колонки</h2>
+    <table id="players"><tbody><tr><td colspan="3">Загрузка…</td></tr></tbody></table>
+  </div>
+
+  <div class="card">
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="status">Положите телефон туда, где слушаете, и нажмите «Калибровать».</span>
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div style="margin-top:14px">
+      <button id="run">Калибровать</button>
+      <button id="probe" class="secondary">Проверить знак sync_adjust</button>
+    </div>
+    <p class="note">
+      Во время замера будет тихо, потом колонки по очереди издадут короткие свисты.
+      Не двигайте телефон и старайтесь не шуметь.
+    </p>
+  </div>
+
+  <div class="card hidden" id="result">
+    <h2>Результат</h2>
+    <div>
+      <span class="headline" id="before">—</span>
+      <span class="arrow">→</span>
+      <span class="headline" id="after">—</span>
+      <span class="sub" style="margin:0">мс разброса</span>
+    </div>
+    <table id="corrections" style="margin-top:14px"></table>
+    <div id="notes"></div>
+
+    <div class="saverow">
+      <input id="save-name" type="text" placeholder="Название позиции, например «диван»"
+             autocomplete="off" maxlength="60">
+      <button id="save" class="secondary">Сохранить</button>
+    </div>
+  </div>
+
+  <div class="card" id="profiles-card">
+    <h2>Позиции</h2>
+    <p class="note" style="margin-top:0">
+      Калибровка привязана к точке, где стоял телефон: компенсируется в том числе
+      путь звука по воздуху. Для дивана и кухни нужны разные поправки — сохранённую
+      позицию можно применить без нового замера.
+    </p>
+    <table id="profiles"></table>
+  </div>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

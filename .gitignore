@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated at runtime: saved calibration profiles.
+/.spinalign/
+
+# Local deployment secrets; .env.example is the template that is tracked.
+.env

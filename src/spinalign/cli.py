@@ -1,0 +1,227 @@
+"""Command line entry points."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+from spinalign.calibration.session import CalibrationReport, SessionConfig
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="spinalign",
+        description="Acoustic latency calibration for Music Assistant / Sendspin speakers.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    # Every option also reads an environment variable, because a container
+    # platform sets those rather than assembling a command line. An explicit
+    # flag still wins.
+    serve = commands.add_parser("serve", help="run the web UI against a Music Assistant server")
+    serve.add_argument(
+        "--ma-url",
+        default=os.environ.get("SPINALIGN_MA_URL"),
+        help="Music Assistant, e.g. http://192.168.1.10:8095  [SPINALIGN_MA_URL]",
+    )
+    serve.add_argument(
+        "--token",
+        default=os.environ.get("SPINALIGN_MA_TOKEN"),
+        help="Music Assistant token with CONFIG_PLAYERS_READ/WRITE  [SPINALIGN_MA_TOKEN]",
+    )
+    serve.add_argument(
+        "--audio-base-url",
+        default=os.environ.get("SPINALIGN_AUDIO_BASE_URL"),
+        help=(
+            "where MUSIC ASSISTANT reaches this app to fetch the test track — "
+            "a Docker service name or the host's LAN address, not the browser's "
+            "address  [SPINALIGN_AUDIO_BASE_URL]"
+        ),
+    )
+    serve.add_argument(
+        "--access-token",
+        default=os.environ.get("SPINALIGN_ACCESS_TOKEN"),
+        help="shared secret protecting the UI, API and socket  [SPINALIGN_ACCESS_TOKEN]",
+    )
+    serve.add_argument(
+        "--state-dir",
+        type=Path,
+        default=Path(os.environ.get("SPINALIGN_STATE_DIR", Path.home() / ".spinalign")),
+        help=(
+            "where saved positions and the probed sync_adjust sign live; needs "
+            "to be a volume in a container or both are lost on restart "
+            "[SPINALIGN_STATE_DIR]"
+        ),
+    )
+    serve.add_argument("--host", default=os.environ.get("SPINALIGN_HOST", "0.0.0.0"))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("SPINALIGN_PORT", "8080")))
+
+    simulate = commands.add_parser(
+        "simulate", help="run a full calibration against a simulated room (no hardware)"
+    )
+    simulate.add_argument("--snr", type=float, default=30.0, help="room signal-to-noise, dB")
+    simulate.add_argument("--reflections", action="store_true", help="add wall reflections")
+
+    signal = commands.add_parser("signal", help="write the test track to a WAV file")
+    signal.add_argument("--out", type=Path, required=True)
+    signal.add_argument("--chirps", type=int, default=20)
+
+    args = parser.parse_args(argv)
+
+    if args.command == "serve":
+        return asyncio.run(_serve(args))
+    if args.command == "simulate":
+        return asyncio.run(_simulate(args))
+    if args.command == "signal":
+        return _write_signal(args)
+    return 2
+
+
+async def _serve(args) -> int:
+    from spinalign.ma.client import MusicAssistantBackend
+    from spinalign.web.app import AppState, serve
+
+    missing_config = [
+        name
+        for name, value in (
+            ("--ma-url / SPINALIGN_MA_URL", args.ma_url),
+            ("--audio-base-url / SPINALIGN_AUDIO_BASE_URL", args.audio_base_url),
+        )
+        if not value
+    ]
+    if missing_config:
+        for name in missing_config:
+            print(f"Missing required setting: {name}", file=sys.stderr)
+        return 2
+
+    print(f"Connecting to Music Assistant at {args.ma_url} …")
+    try:
+        backend = await MusicAssistantBackend.connect(args.ma_url, token=args.token)
+    except Exception as error:
+        print(f"Could not connect: {error}", file=sys.stderr)
+        return 1
+
+    players = [p for p in await backend.list_players() if p.is_calibratable]
+    print(f"Found {len(players)} calibratable Sendspin player(s).\n")
+
+    state = AppState(
+        backend=backend,
+        session_config=SessionConfig(),
+        audio_base_url=args.audio_base_url.rstrip("/"),
+        access_token=args.access_token or None,
+    )
+
+    from spinalign.calibration.profiles import ProfileStore
+
+    try:
+        state.adopt_store(ProfileStore.open(args.state_dir))
+    except OSError as error:
+        print(f"Cannot use state directory {args.state_dir}: {error}", file=sys.stderr)
+        return 1
+
+    await serve(state, host=args.host, port=args.port)
+    return 0
+
+
+async def _simulate(args) -> int:
+    fake = _import_simulator()
+    if fake is None:
+        print(
+            "The simulator ships only with the source checkout; run this from the repository.",
+            file=sys.stderr,
+        )
+        return 1
+
+    from spinalign.calibration.session import calibrate
+    from spinalign.calibration.validate import determine_sign
+
+    speakers = fake.mixed_speakers()
+    if args.reflections:
+        speakers = [
+            s.__class__(**{**s.__dict__, "reflections": ((8.0, 0.8), (19.0, 0.5))})
+            for s in speakers
+        ]
+
+    clock = fake.VirtualClock()
+    server = fake.FakeMusicAssistant(
+        speakers=speakers, clock=clock, config=fake.RoomConfig(snr_db=args.snr)
+    )
+    recorder = fake.SimulatedRecorder(server)
+
+    print("Simulated room:")
+    for speaker in speakers:
+        print(
+            f"  {speaker.name:24s} {speaker.hardware_latency_ms:6.1f} ms hardware "
+            f"+ {speaker.distance_m:.1f} m = {speaker.total_latency_ms:6.1f} ms"
+        )
+
+    print("\nProbing the sync_adjust convention …")
+    check = await determine_sign(server, recorder, sleep=clock.sleep)
+    print(f"  {check.detail}")
+
+    print("\nCalibrating …")
+    report = await calibrate(server, recorder, sign=check.sign, sleep=clock.sleep)
+    print(_format_report(report))
+    return 0 if report.improved and not report.problems else 1
+
+
+def _import_simulator():
+    try:
+        import sim.fake_ma as fake
+        import sim.virtual_room as room
+    except ImportError:
+        root = Path(__file__).resolve().parents[2]
+        if not (root / "sim").is_dir():
+            return None
+        sys.path.insert(0, str(root))
+        try:
+            import sim.fake_ma as fake
+            import sim.virtual_room as room
+        except ImportError:
+            return None
+
+    fake.RoomConfig = room.RoomConfig
+    return fake
+
+
+def _format_report(report: CalibrationReport) -> str:
+    lines = [
+        "",
+        f"  strategy        {report.solution.strategy}",
+        f"  spread before   {report.spread_before_ms:7.1f} ms",
+    ]
+    if report.spread_after_ms is not None:
+        lines.append(f"  spread after    {report.spread_after_ms:7.1f} ms")
+    lines.append("")
+    lines.append(f"  {'speaker':24s} {'was':>8s} {'now':>8s} {'residual':>10s}")
+    for correction in report.solution.corrections:
+        lines.append(
+            f"  {correction.name:24s} {correction.current_adjust_ms:6d} ms "
+            f"{correction.target_adjust_ms:6d} ms {correction.residual_error_ms:8.2f} ms"
+            + ("  (clamped)" if correction.clamped else "")
+        )
+
+    if report.problems:
+        lines.append("")
+        for problem in report.problems:
+            lines.append(f"  ! {problem}")
+    return "\n".join(lines)
+
+
+def _write_signal(args) -> int:
+    from spinalign.dsp.signals import build_test_signal, to_wav_bytes
+
+    signal = build_test_signal(chirp_count=args.chirps)
+    args.out.write_bytes(to_wav_bytes(signal.samples, signal.sample_rate))
+    print(
+        f"Wrote {args.out} — {signal.chirp_count} chirps, "
+        f"{signal.duration_seconds:.1f} s at {signal.sample_rate} Hz"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
