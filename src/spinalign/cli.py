@@ -104,8 +104,18 @@ async def _serve(args) -> int:
         print(f"Could not connect: {error}", file=sys.stderr)
         return 1
 
-    players = [p for p in await backend.list_players() if p.is_calibratable]
-    print(f"Found {len(players)} calibratable Sendspin player(s).\n")
+    try:
+        found = await backend.list_players()
+    except Exception as error:
+        print(f"Could not list players: {error}", file=sys.stderr)
+        return 1
+
+    players = [p for p in found if p.is_calibratable]
+    print(f"Found {len(players)} calibratable Sendspin player(s).")
+    for player in found:
+        if not player.is_calibratable:
+            print(f"  skipping {player.name}: {player.exclusion_reason}")
+    print()
 
     state = AppState(
         backend=backend,

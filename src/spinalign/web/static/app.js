@@ -155,9 +155,11 @@ async function refreshPlayers() {
   const rows = players.map((p) => `
     <tr>
       <td>${escapeHtml(p.name)}</td>
-      <td class="num">${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс</td>
+      <td class="num">${p.calibratable
+        ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
+        : '—'}</td>
       <td><span class="pill ${p.calibratable ? 'on' : 'off'}">${
-        p.calibratable ? 'готова' : (p.provider.startsWith('sendspin') ? 'недоступна' : p.provider)
+        escapeHtml(p.calibratable ? 'готова' : (p.excluded_because || 'не участвует'))
       }</span></td>
     </tr>`).join('');
 

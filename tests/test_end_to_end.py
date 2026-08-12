@@ -16,6 +16,7 @@ from sim.virtual_room import RoomConfig, VirtualSpeaker
 from spinalign.calibration.profiles import Profile, apply_profile
 from spinalign.calibration.session import SessionConfig, calibrate, measure_once
 from spinalign.calibration.validate import determine_sign
+from spinalign.ma.backend import PlayerInfo
 
 
 def make_server(speakers=None, **room_kwargs):
@@ -157,6 +158,29 @@ async def test_a_saved_position_realigns_the_room_without_measuring_again():
     )
     latencies = list(verified.latencies_ms.values())
     assert max(latencies) - min(latencies) < 3.0
+
+
+async def test_a_sync_group_reported_alongside_the_speakers_is_ignored():
+    """Music Assistant lists sync groups next to real players. One turned up on
+    live hardware and took the whole startup down with it, because a group has
+    no sync_adjust entry at all. It must simply sit the session out."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.extra_players = [
+        PlayerInfo(
+            player_id="syncgroup_wgsar5sd",
+            name="Везде",
+            provider="sendspin",
+            player_type="group",
+            supports_sync_adjust=False,
+        )
+    ]
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert "syncgroup_wgsar5sd" not in {c.player_id for c in report.solution.corrections}
+    assert "syncgroup_wgsar5sd" not in dict(report.applied)
 
 
 async def test_refuses_to_calibrate_a_single_speaker():

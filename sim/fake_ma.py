@@ -51,6 +51,11 @@ class FakeMusicAssistant:
     """How long a ``sync_adjust`` write takes to come back, as the real one
     reloads the player."""
 
+    extra_players: list[PlayerInfo] = field(default_factory=list)
+    """Players Music Assistant reports but that make no sound of their own —
+    sync groups, protocol anchors. They are listed and never rendered, which
+    is exactly how a real server presents them."""
+
     _mutes: list[_MuteEvent] = field(default_factory=list, init=False)
     _muted_now: dict[str, bool] = field(default_factory=dict, init=False)
     _playback_started: float | None = field(default=None, init=False)
@@ -76,7 +81,7 @@ class FakeMusicAssistant:
                 sync_adjust_ms=s.sync_adjust_ms,
             )
             for s in self.speakers
-        ]
+        ] + list(self.extra_players)
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
         self.writes.append((player_id, milliseconds))

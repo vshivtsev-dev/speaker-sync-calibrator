@@ -31,6 +31,24 @@ class FakePlayer:
     powered: bool = True
     volume_level: int = 40
     volume_muted: bool = False
+    type: str = "player"
+
+
+@dataclass
+class FakePlayerConfig:
+    """Shaped like music_assistant_models' PlayerConfig.
+
+    The important behaviour is ``get_value``: a key that is not there returns
+    the default instead of raising, which is what makes group players — who
+    have no sync_adjust at all — harmless to read.
+    """
+
+    player_id: str
+    values: dict
+
+    def get_value(self, key, default=None):
+        entry = self.values.get(key)
+        return default if entry is None else entry
 
 
 @dataclass
@@ -55,9 +73,21 @@ class FakePlayers:
 class FakeConfig:
     values: dict = field(default_factory=dict)
     saved: list[tuple] = field(default_factory=list)
+    bulk_calls: int = 0
 
-    async def get_player_config_value(self, player_id, key):
-        return self.values.get((player_id, key))
+    def _config_for(self, player_id):
+        return FakePlayerConfig(
+            player_id=player_id,
+            values={k: v for (pid, k), v in self.values.items() if pid == player_id},
+        )
+
+    async def get_player_configs(self, provider=None, include_values=False):
+        self.bulk_calls += 1
+        ids = {pid for pid, _ in self.values}
+        return [self._config_for(player_id) for player_id in sorted(ids)]
+
+    async def get_player_config(self, player_id):
+        return self._config_for(player_id)
 
     async def save_player_config(self, player_id, values):
         self.saved.append((player_id, dict(values)))
@@ -78,7 +108,7 @@ class FakeClient:
 def backend():
     client = FakeClient(
         [FakePlayer("esp32", "Кухня"), FakePlayer("bt", "Спальня", volume_muted=True)],
-        values={("esp32", "sync_adjust"): 120},
+        values={("esp32", "sync_adjust"): 120, ("bt", "sync_adjust"): None},
     )
     return MusicAssistantBackend(client), client
 
@@ -101,6 +131,67 @@ async def test_unset_sync_adjust_reads_as_zero(backend):
     adapter, _ = backend
 
     assert await adapter.get_sync_adjust("bt") == 0
+
+
+async def test_configs_are_fetched_in_one_call_not_one_per_player(backend):
+    """Asking per player also meant asking by key name, which raises when the
+    key is absent — the crash this avoids."""
+    adapter, client = backend
+
+    await adapter.list_players()
+
+    assert client.config.bulk_calls == 1
+
+
+async def test_a_sync_group_is_listed_but_not_calibratable():
+    """Music Assistant reports sync groups alongside real speakers. A group has
+    no output of its own and no sync_adjust entry; reading it by key name is an
+    error, and treating it as a speaker would be meaningless anyway."""
+    client = FakeClient(
+        [
+            FakePlayer("esp32", "Кухня"),
+            FakePlayer("syncgroup_wgsar5sd", "Везде", type="group"),
+        ],
+        values={("esp32", "sync_adjust"): 0},
+    )
+    adapter = MusicAssistantBackend(client)
+
+    players = await adapter.list_players()
+
+    group = next(p for p in players if p.player_id == "syncgroup_wgsar5sd")
+    assert not group.renders_audio
+    assert not group.is_calibratable
+    assert group.exclusion_reason == "группа, а не колонка"
+    # And the real speaker beside it is unaffected.
+    assert next(p for p in players if p.player_id == "esp32").is_calibratable
+
+
+async def test_a_player_without_the_setting_is_excluded_not_assumed_zero():
+    """A missing sync_adjust is not the same as a sync_adjust of zero: we
+    cannot correct such a player, so it must not join the session."""
+    client = FakeClient([FakePlayer("odd", "Странная")], values={("odd", "volume"): 30})
+    adapter = MusicAssistantBackend(client)
+
+    (player,) = await adapter.list_players()
+
+    assert not player.supports_sync_adjust
+    assert not player.is_calibratable
+    assert player.exclusion_reason == "нет настройки sync_adjust"
+
+
+async def test_a_stereo_pair_is_a_real_speaker():
+    """Two boxes acting as one player still make sound and still carry the
+    setting, unlike a group."""
+    client = FakeClient(
+        [FakePlayer("pair", "Стереопара", type="stereo_pair")],
+        values={("pair", "sync_adjust"): 40},
+    )
+    adapter = MusicAssistantBackend(client)
+
+    (player,) = await adapter.list_players()
+
+    assert player.is_calibratable
+    assert player.sync_adjust_ms == 40
 
 
 async def test_sync_adjust_is_written_under_the_documented_key(backend):

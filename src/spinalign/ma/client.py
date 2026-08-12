@@ -96,8 +96,24 @@ class MusicAssistantBackend:
     # ------------------------------------------------------------------ port
 
     async def list_players(self) -> list[PlayerInfo]:
+        """List players, with each one's ``sync_adjust`` already attached.
+
+        Configs are fetched in a single call rather than one per player. That
+        is not only cheaper: asking for a config value *by name* raises when
+        the key is absent, and group and protocol players have no
+        ``sync_adjust`` at all. Reading it out of the whole config turns "this
+        player has no such setting" into a missing dictionary entry, which is
+        what it actually is.
+        """
+        configs = {
+            config.player_id: config
+            for config in await self._client.config.get_player_configs(include_values=True)
+        }
+
         players = []
         for player in self._client.players.players:
+            config = configs.get(player.player_id)
+            raw = config.get_value(SYNC_ADJUST_KEY) if config is not None else None
             players.append(
                 PlayerInfo(
                     player_id=player.player_id,
@@ -107,19 +123,18 @@ class MusicAssistantBackend:
                     powered=bool(player.powered),
                     volume_level=int(player.volume_level or 0),
                     muted=bool(player.volume_muted),
-                    sync_adjust_ms=await self.get_sync_adjust(player.player_id),
+                    player_type=_type_name(player.type),
+                    sync_adjust_ms=_as_int(raw),
+                    supports_sync_adjust=(
+                        config is not None and SYNC_ADJUST_KEY in (config.values or {})
+                    ),
                 )
             )
         return players
 
     async def get_sync_adjust(self, player_id: str) -> int:
-        value = await self._client.config.get_player_config_value(player_id, SYNC_ADJUST_KEY)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            # An unset entry comes back as None; treat it as the documented
-            # default rather than failing the whole session over it.
-            return 0
+        config = await self._client.config.get_player_config(player_id)
+        return _as_int(config.get_value(SYNC_ADJUST_KEY))
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
         await self._client.config.save_player_config(
@@ -143,3 +158,16 @@ class MusicAssistantBackend:
 
     async def stop(self, player_id: str) -> None:
         await self._client.players.stop(player_id)
+
+
+def _type_name(player_type) -> str:
+    """Normalise a PlayerType enum (or a plain string) to its value."""
+    return str(getattr(player_type, "value", player_type) or "player")
+
+
+def _as_int(value) -> int:
+    """An unset config entry reads as ``None``; that is its documented default."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

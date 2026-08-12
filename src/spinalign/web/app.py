@@ -243,6 +243,7 @@ def create_app(state: AppState) -> web.Application:
                         "available": p.available,
                         "sync_adjust_ms": p.sync_adjust_ms,
                         "calibratable": p.is_calibratable,
+                        "excluded_because": p.exclusion_reason,
                     }
                     for p in found
                 ],
