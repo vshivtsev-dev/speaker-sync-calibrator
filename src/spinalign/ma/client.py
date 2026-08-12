@@ -19,9 +19,12 @@ Two things about the library are easy to get wrong and worth stating:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from spinalign.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
+
+logger = logging.getLogger("spinalign.ma")
 
 DEFAULT_CONNECT_TIMEOUT = 30.0
 
@@ -98,21 +101,19 @@ class MusicAssistantBackend:
     async def list_players(self) -> list[PlayerInfo]:
         """List players, with each one's ``sync_adjust`` already attached.
 
-        Configs are fetched in a single call rather than one per player. That
-        is not only cheaper: asking for a config value *by name* raises when
-        the key is absent, and group and protocol players have no
-        ``sync_adjust`` at all. Reading it out of the whole config turns "this
-        player has no such setting" into a missing dictionary entry, which is
-        what it actually is.
-        """
-        configs = {
-            config.player_id: config
-            for config in await self._client.config.get_player_configs(include_values=True)
-        }
+        The *full* per-player config is used rather than the bulk listing.
+        The listing turned out to carry only values that had been explicitly
+        stored, so a setting left at its default looked absent and its speaker
+        was wrongly ruled out. The full config carries the entry definitions,
+        which is what "does this player have the setting" actually means.
 
+        Asking for the value by key name is avoided: that raises for players
+        without the entry, which is how a sync group once took down startup.
+        Reading it out of the whole config makes absence just an absent key.
+        """
         players = []
         for player in self._client.players.players:
-            config = configs.get(player.player_id)
+            config = await self._player_config(player.player_id)
             raw = config.get_value(SYNC_ADJUST_KEY) if config is not None else None
             players.append(
                 PlayerInfo(
@@ -135,12 +136,22 @@ class MusicAssistantBackend:
                         else None
                     ),
                     sync_adjust_ms=_as_int(raw),
-                    supports_sync_adjust=(
-                        config is not None and SYNC_ADJUST_KEY in (config.values or {})
-                    ),
+                    supports_sync_adjust=_has_sync_adjust(config),
                 )
             )
         return players
+
+    async def _player_config(self, player_id: str):
+        """The player's full config, or ``None`` if the server refuses it.
+
+        Groups and other oddities can fail here; that is information, not a
+        reason to abandon the whole listing.
+        """
+        try:
+            return await self._client.config.get_player_config(player_id)
+        except Exception as error:  # noqa: BLE001 - any failure means "unknown"
+            logger.debug("no config for player %s: %s", player_id, error)
+            return None
 
     async def get_sync_adjust(self, player_id: str) -> int:
         config = await self._client.config.get_player_config(player_id)
@@ -168,6 +179,22 @@ class MusicAssistantBackend:
 
     async def stop(self, player_id: str) -> None:
         await self._client.players.stop(player_id)
+
+
+def _has_sync_adjust(config) -> bool:
+    """Whether this player is known to carry the setting.
+
+    An *empty* config is absence of evidence, not evidence of absence: some
+    servers answer without entry definitions at all, and concluding
+    "unsupported" from that would rule out every speaker. Only a populated
+    config that lacks the key is treated as a real no.
+    """
+    if config is None:
+        return False
+    values = getattr(config, "values", None) or {}
+    if not values:
+        return True
+    return SYNC_ADJUST_KEY in values
 
 
 def _type_name(player_type) -> str:

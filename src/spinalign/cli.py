@@ -70,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     inspect.add_argument("--ma-url", default=os.environ.get("SPINALIGN_MA_URL"))
     inspect.add_argument("--token", default=os.environ.get("SPINALIGN_MA_TOKEN"))
+    inspect.add_argument(
+        "--keys",
+        action="store_true",
+        help="also list every config key each player has, to see what it is called here",
+    )
 
     signal = commands.add_parser("signal", help="write the test track to a WAV file")
     signal.add_argument("--out", type=Path, required=True)
@@ -181,6 +186,15 @@ async def _players(args) -> int:
             f"{player.name:{width}}  {player.transport:16} {player.provider:18} "
             f"{setting:>11}  {verdict}"
         )
+
+    if getattr(args, "keys", False):
+        # When sync_adjust is reported missing, the fastest way to tell a
+        # renamed setting from an absent one is to look at what is there.
+        print()
+        for player in players:
+            config = await backend._player_config(player.player_id)
+            keys = sorted(getattr(config, "values", None) or {}) if config else []
+            print(f"{player.name}: {', '.join(keys) if keys else '(no config entries returned)'}")
 
     usable = sum(1 for p in players if p.is_calibratable)
     print(f"\n{usable} of {len(players)} can be calibrated.")

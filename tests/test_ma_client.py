@@ -73,18 +73,12 @@ class FakePlayers:
 class FakeConfig:
     values: dict = field(default_factory=dict)
     saved: list[tuple] = field(default_factory=list)
-    bulk_calls: int = 0
 
     def _config_for(self, player_id):
         return FakePlayerConfig(
             player_id=player_id,
             values={k: v for (pid, k), v in self.values.items() if pid == player_id},
         )
-
-    async def get_player_configs(self, provider=None, include_values=False):
-        self.bulk_calls += 1
-        ids = {pid for pid, _ in self.values}
-        return [self._config_for(player_id) for player_id in sorted(ids)]
 
     async def get_player_config(self, player_id):
         return self._config_for(player_id)
@@ -133,14 +127,33 @@ async def test_unset_sync_adjust_reads_as_zero(backend):
     assert await adapter.get_sync_adjust("bt") == 0
 
 
-async def test_configs_are_fetched_in_one_call_not_one_per_player(backend):
-    """Asking per player also meant asking by key name, which raises when the
-    key is absent — the crash this avoids."""
-    adapter, client = backend
+async def test_a_setting_left_at_its_default_still_counts_as_present(backend):
+    """The bug that ruled out real speakers.
 
-    await adapter.list_players()
+    The bulk config listing carries only values somebody explicitly stored, so
+    a speaker sitting at the default looked as though it had no sync_adjust at
+    all. Presence is a property of the entry, not of whether anyone has
+    touched it — 'bt' here has the entry with no value set.
+    """
+    adapter, _ = backend
 
-    assert client.config.bulk_calls == 1
+    players = {p.player_id: p for p in await adapter.list_players()}
+
+    assert players["bt"].supports_sync_adjust
+    assert players["bt"].sync_adjust_ms == 0
+    assert players["bt"].is_calibratable
+
+
+async def test_a_config_with_no_entries_at_all_is_not_taken_as_a_refusal():
+    """Absence of evidence is not evidence of absence: a server that answers
+    without entry definitions must not disqualify every speaker."""
+    client = FakeClient([FakePlayer("quiet", "Молчун")], values={})
+    adapter = MusicAssistantBackend(client)
+
+    (player,) = await adapter.list_players()
+
+    assert player.supports_sync_adjust
+    assert player.is_calibratable
 
 
 async def test_a_sync_group_is_listed_but_not_calibratable():
