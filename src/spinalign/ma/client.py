@@ -126,6 +126,14 @@ class MusicAssistantBackend:
                     player_type=_type_name(player.type),
                     enabled=bool(getattr(player, "enabled", True)),
                     hidden=bool(getattr(player, "hide_in_ui", False)),
+                    output_protocols=tuple(
+                        _type_name(p) for p in getattr(player, "output_protocols", ()) or ()
+                    ),
+                    active_output_protocol=(
+                        _type_name(active)
+                        if (active := getattr(player, "active_output_protocol", None))
+                        else None
+                    ),
                     sync_adjust_ms=_as_int(raw),
                     supports_sync_adjust=(
                         config is not None and SYNC_ADJUST_KEY in (config.values or {})

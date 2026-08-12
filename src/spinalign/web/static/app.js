@@ -157,7 +157,7 @@ async function refreshPlayers() {
 
   const rows = players.map((p) => `
     <tr>
-      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.provider)}</span></td>
+      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span></td>
       <td class="num">${p.calibratable
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
         : '—'}</td>
@@ -180,7 +180,7 @@ async function refreshPlayers() {
         : 'Music Assistant не отдал ни одного плеера.',
       'err',
     );
-  } else if (ready.some((p) => !p.provider.startsWith('sendspin'))) {
+  } else if (ready.some((p) => !p.is_sendspin)) {
     // Sendspin guarantees the tightest playback sync; other providers still
     // work, since any offset they add is measured and corrected, but the
     // result is only as steady as their own synchronisation.

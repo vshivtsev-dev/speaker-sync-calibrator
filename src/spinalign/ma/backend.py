@@ -44,6 +44,15 @@ class PlayerInfo:
     player_type: str = "player"
     enabled: bool = True
     hidden: bool = False
+    output_protocols: tuple[str, ...] = ()
+    active_output_protocol: str | None = None
+    """How the audio actually reaches this player.
+
+    Distinct from ``provider``, and the distinction matters: Music Assistant
+    routinely exposes a speaker through a provider like ``universal_player``
+    while still carrying the stream over Sendspin. The provider says nothing
+    about the synchronisation guarantee; the output protocol does.
+    """
     supports_sync_adjust: bool = True
     """Whether this player's config actually carries a ``sync_adjust`` entry.
 
@@ -52,11 +61,29 @@ class PlayerInfo:
     """
 
     @property
+    def transport(self) -> str:
+        """The protocol carrying the audio — what the UI should show."""
+        if self.active_output_protocol:
+            return self.active_output_protocol
+        if self.output_protocols:
+            return self.output_protocols[0]
+        return self.provider
+
+    @property
     def is_sendspin(self) -> bool:
-        # Music Assistant reports a provider *instance* id, which for a single
-        # configured instance is just "sendspin" but carries a suffix when
-        # several are set up.
-        return self.provider.split("--", 1)[0] == SENDSPIN_PROVIDER
+        """Whether the stream reaches this player over Sendspin.
+
+        Sendspin holds playback to within a millisecond, which is the tightest
+        guarantee available and worth telling the user about. It is not a
+        requirement — see :attr:`is_calibratable`.
+        """
+        candidates = (
+            [self.active_output_protocol]
+            if self.active_output_protocol
+            else list(self.output_protocols) or [self.provider]
+        )
+        # A provider instance id carries a "--suffix" when several are set up.
+        return any(str(c).split("--", 1)[0].lower() == SENDSPIN_PROVIDER for c in candidates if c)
 
     @property
     def renders_audio(self) -> bool:

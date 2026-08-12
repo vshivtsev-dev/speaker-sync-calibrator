@@ -173,12 +173,12 @@ async def _players(args) -> int:
         return 1
 
     width = max(len(p.name) for p in players)
-    print(f"{'name':{width}}  {'provider':22} {'type':14} {'sync_adjust':>11}  verdict")
+    print(f"{'name':{width}}  {'transport':16} {'provider':18} {'sync_adjust':>11}  verdict")
     for player in players:
         setting = f"{player.sync_adjust_ms} ms" if player.supports_sync_adjust else "absent"
         verdict = "calibratable" if player.is_calibratable else player.exclusion_reason
         print(
-            f"{player.name:{width}}  {player.provider:22} {player.player_type:14} "
+            f"{player.name:{width}}  {player.transport:16} {player.provider:18} "
             f"{setting:>11}  {verdict}"
         )
 

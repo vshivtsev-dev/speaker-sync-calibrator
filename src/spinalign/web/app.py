@@ -240,6 +240,8 @@ def create_app(state: AppState) -> web.Application:
                         "player_id": p.player_id,
                         "name": p.name,
                         "provider": p.provider,
+                        "transport": p.transport,
+                        "is_sendspin": p.is_sendspin,
                         "available": p.available,
                         "sync_adjust_ms": p.sync_adjust_ms,
                         "calibratable": p.is_calibratable,
