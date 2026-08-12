@@ -71,7 +71,10 @@ function connect() {
   socket = new WebSocket(socketUrl);
   socket.binaryType = 'arraybuffer';
 
-  socket.onopen = () => setStatus('Готово. Положите телефон туда, где слушаете.');
+  // The player list owns the status line: it is the thing that knows whether
+  // a calibration can actually start. Announcing "ready" here would overwrite
+  // an explanation of why the buttons are disabled.
+  socket.onopen = () => refreshPlayers();
   socket.onclose = () => {
     setStatus('Соединение потеряно, переподключаюсь…', 'err');
     setBusy(true);
@@ -154,7 +157,7 @@ async function refreshPlayers() {
 
   const rows = players.map((p) => `
     <tr>
-      <td>${escapeHtml(p.name)}</td>
+      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.provider)}</span></td>
       <td class="num">${p.calibratable
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
         : '—'}</td>
@@ -165,12 +168,27 @@ async function refreshPlayers() {
 
   el('players').innerHTML =
     `<thead><tr><th>Колонка</th><th>sync_adjust</th><th></th></tr></thead>
-     <tbody>${rows || '<tr><td colspan="3">Sendspin-колонки не найдены</td></tr>'}</tbody>`;
+     <tbody>${rows || '<tr><td colspan="3">Music Assistant не отдал ни одного плеера</td></tr>'}</tbody>`;
 
-  const ready = players.filter((p) => p.calibratable).length;
-  setBusy(ready < 2);
-  if (ready < 2) {
-    setStatus('Нужно минимум две доступные Sendspin-колонки.', 'err');
+  const ready = players.filter((p) => p.calibratable);
+  setBusy(ready.length < 2);
+
+  if (ready.length < 2) {
+    setStatus(
+      players.length
+        ? 'Нужно минимум две колонки с настройкой sync_adjust. Смотрите причины в списке выше.'
+        : 'Music Assistant не отдал ни одного плеера.',
+      'err',
+    );
+  } else if (ready.some((p) => !p.provider.startsWith('sendspin'))) {
+    // Sendspin guarantees the tightest playback sync; other providers still
+    // work, since any offset they add is measured and corrected, but the
+    // result is only as steady as their own synchronisation.
+    setStatus(
+      `Готово, колонок: ${ready.length}. Часть из них не Sendspin — точность будет зависеть от их собственной синхронизации.`,
+    );
+  } else {
+    setStatus(`Готово, колонок: ${ready.length}. Положите телефон туда, где слушаете.`);
   }
 }
 

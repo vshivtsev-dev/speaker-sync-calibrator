@@ -124,6 +124,8 @@ class MusicAssistantBackend:
                     volume_level=int(player.volume_level or 0),
                     muted=bool(player.volume_muted),
                     player_type=_type_name(player.type),
+                    enabled=bool(getattr(player, "enabled", True)),
+                    hidden=bool(getattr(player, "hide_in_ui", False)),
                     sync_adjust_ms=_as_int(raw),
                     supports_sync_adjust=(
                         config is not None and SYNC_ADJUST_KEY in (config.values or {})

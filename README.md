@@ -139,6 +139,27 @@ announcement command and a token there would land in MA's logs and queue. That
 route is a pure function of its query parameters, with no side effects and
 nothing about the system in its response.
 
+### Which players take part
+
+A player joins a calibration when it makes a sound and has a `sync_adjust`
+setting to write. That is all the measurement needs, so the provider is not a
+requirement: whatever synchronisation error a protocol introduces is part of
+what gets measured and corrected, as long as it is stable — and an unstable
+one shows up in the per-round outlier check rather than silently.
+
+Sendspin gives the tightest guarantee and the UI says so when the group is
+mixed, but *requiring* it turned out to exclude everything on real systems
+where the same speakers are exposed through another provider.
+
+Sync groups and other aggregates are excluded, along with disabled and hidden
+players. When a speaker is unexpectedly sitting out, ask:
+
+```bash
+spinalign players --ma-url http://192.168.1.10:8095
+```
+
+which prints each player's provider, type, `sync_adjust` and the verdict.
+
 ### Listening positions
 
 A calibration belongs to the spot the phone was standing in — the compensation
@@ -174,7 +195,7 @@ the probed sign, and without it both are gone on every restart.
 
 ## Status
 
-Complete and covered by 114 tests that need no hardware: Music Assistant sits
+Complete and covered by 121 tests that need no hardware: Music Assistant sits
 behind a narrow port, and a simulated room renders audio the detector
 genuinely has to measure.
 

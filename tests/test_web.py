@@ -24,6 +24,7 @@ from sim.fake_ma import (
 )
 from spinalign.calibration.profiles import ProfileStore
 from spinalign.calibration.session import SessionConfig, calibrate
+from spinalign.ma.backend import PlayerInfo
 from spinalign.web.app import TOKEN_COOKIE, AppState, create_app, serve
 
 TOKEN = "s3cret-token"
@@ -122,15 +123,38 @@ async def test_players_endpoint_reports_calibratability(state):
     assert payload["sign"] == 1
 
 
-async def test_non_sendspin_players_are_marked_uncalibratable(state):
-    state.backend.provider = "airplay"
+async def test_players_from_another_provider_are_still_offered(state):
+    """Real systems expose the same speakers through providers other than
+    Sendspin, and demanding Sendspin left nothing to calibrate at all."""
+    state.backend.provider = "universal_player"
     client = await client_for(create_app(state))
     try:
         payload = await (await client.get("/api/players")).json()
     finally:
         await client.close()
 
-    assert not any(p["calibratable"] for p in payload["players"])
+    assert all(p["calibratable"] for p in payload["players"])
+
+
+async def test_an_excluded_player_says_why(state):
+    """The list is the only place a user can find out why a speaker is sitting
+    out, so the reason travels with it."""
+    state.backend.extra_players = [
+        PlayerInfo("sync", "Везде", "sync_group", supports_sync_adjust=False),
+        PlayerInfo("odd", "Без настройки", "universal_player", supports_sync_adjust=False),
+        PlayerInfo("off", "Выключена", "universal_player", available=False),
+    ]
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    reasons = {p["name"]: p["excluded_because"] for p in payload["players"]}
+    assert reasons["Везде"] == "группа, а не колонка"
+    assert reasons["Без настройки"] == "нет настройки sync_adjust"
+    assert reasons["Выключена"] == "недоступна"
+    assert reasons["Кухня (ESP32)"] is None
 
 
 async def test_ui_and_health_are_served(state):

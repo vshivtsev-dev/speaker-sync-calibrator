@@ -65,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
     simulate.add_argument("--snr", type=float, default=30.0, help="room signal-to-noise, dB")
     simulate.add_argument("--reflections", action="store_true", help="add wall reflections")
 
+    inspect = commands.add_parser(
+        "players", help="dump everything Music Assistant reports about each player"
+    )
+    inspect.add_argument("--ma-url", default=os.environ.get("SPINALIGN_MA_URL"))
+    inspect.add_argument("--token", default=os.environ.get("SPINALIGN_MA_TOKEN"))
+
     signal = commands.add_parser("signal", help="write the test track to a WAV file")
     signal.add_argument("--out", type=Path, required=True)
     signal.add_argument("--chirps", type=int, default=20)
@@ -73,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "serve":
         return asyncio.run(_serve(args))
+    if args.command == "players":
+        return asyncio.run(_players(args))
     if args.command == "simulate":
         return asyncio.run(_simulate(args))
     if args.command == "signal":
@@ -111,7 +119,7 @@ async def _serve(args) -> int:
         return 1
 
     players = [p for p in found if p.is_calibratable]
-    print(f"Found {len(players)} calibratable Sendspin player(s).")
+    print(f"Found {len(players)} calibratable player(s).")
     for player in found:
         if not player.is_calibratable:
             print(f"  skipping {player.name}: {player.exclusion_reason}")
@@ -134,6 +142,49 @@ async def _serve(args) -> int:
 
     await serve(state, host=args.host, port=args.port)
     return 0
+
+
+async def _players(args) -> int:
+    """Print what Music Assistant says about every player, and our verdict.
+
+    Provider domains and player types vary between Music Assistant versions,
+    so when a speaker is unexpectedly sitting out, the fastest way to find out
+    why is to look at the raw values rather than guess at them.
+    """
+    from spinalign.ma.client import MusicAssistantBackend
+
+    if not args.ma_url:
+        print("Missing --ma-url / SPINALIGN_MA_URL", file=sys.stderr)
+        return 2
+
+    try:
+        backend = await MusicAssistantBackend.connect(args.ma_url, token=args.token)
+    except Exception as error:
+        print(f"Could not connect: {error}", file=sys.stderr)
+        return 1
+
+    try:
+        players = await backend.list_players()
+    finally:
+        await backend.close()
+
+    if not players:
+        print("Music Assistant reported no players at all.")
+        return 1
+
+    width = max(len(p.name) for p in players)
+    print(f"{'name':{width}}  {'provider':22} {'type':14} {'sync_adjust':>11}  verdict")
+    for player in players:
+        setting = f"{player.sync_adjust_ms} ms" if player.supports_sync_adjust else "absent"
+        verdict = "calibratable" if player.is_calibratable else player.exclusion_reason
+        print(
+            f"{player.name:{width}}  {player.provider:22} {player.player_type:14} "
+            f"{setting:>11}  {verdict}"
+        )
+
+    usable = sum(1 for p in players if p.is_calibratable)
+    print(f"\n{usable} of {len(players)} can be calibrated.")
+    return 0 if usable >= 2 else 1
 
 
 async def _simulate(args) -> int:

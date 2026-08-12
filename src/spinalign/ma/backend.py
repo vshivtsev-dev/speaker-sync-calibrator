@@ -17,11 +17,16 @@ SENDSPIN_PROVIDER = "sendspin"
 # Music Assistant's per-player sync correction, in milliseconds.
 SYNC_ADJUST_KEY = "sync_adjust"
 
-# Player types that correspond to something that actually makes a sound.
-# A sync group is an aggregate with no output of its own, and a protocol
-# player is a server-side anchor — neither can be measured or corrected, and
-# neither even carries a sync_adjust entry.
-CALIBRATABLE_PLAYER_TYPES = frozenset({"player", "stereo_pair"})
+# Things that are an aggregate of other players rather than a speaker: no
+# output of their own, nothing to measure, nothing to correct.
+#
+# Deny-listed rather than allow-listed on purpose. Music Assistant grows new
+# player types and provider domains between releases, and this client will
+# routinely be older than the server it talks to — an allow-list would quietly
+# exclude every speaker on a newer server, which is exactly what happened when
+# it was written the other way round.
+NON_RENDERING_PLAYER_TYPES = frozenset({"group", "sync_group", "protocol", "unknown"})
+AGGREGATE_PROVIDERS = frozenset({"sync_group", "player_group"})
 
 
 @dataclass(frozen=True)
@@ -37,11 +42,13 @@ class PlayerInfo:
     muted: bool = False
     sync_adjust_ms: int = 0
     player_type: str = "player"
+    enabled: bool = True
+    hidden: bool = False
     supports_sync_adjust: bool = True
     """Whether this player's config actually carries a ``sync_adjust`` entry.
 
-    Not every player does — group and protocol players have no such key, and
-    asking for it by name is an error rather than an empty answer.
+    This is the real gate. A speaker we cannot write a correction to cannot be
+    calibrated, whatever it is called or whichever provider exposes it.
     """
 
     @property
@@ -54,20 +61,31 @@ class PlayerInfo:
     @property
     def renders_audio(self) -> bool:
         """Whether this entry is a thing that actually makes a sound."""
-        return self.player_type in CALIBRATABLE_PLAYER_TYPES
+        return (
+            self.player_type not in NON_RENDERING_PLAYER_TYPES
+            and self.provider.split("--", 1)[0] not in AGGREGATE_PROVIDERS
+        )
 
     @property
     def is_calibratable(self) -> bool:
         """Whether this player can take part in a calibration session.
 
-        Restricted to Sendspin because the measurement assumes every speaker
-        renders the stream on the same timeline to within a millisecond. That
-        is a property of the Sendspin protocol, not of Music Assistant, so a
-        mixed group would quietly break the premise.
+        The requirements are only what the measurement genuinely needs: it has
+        to make a sound, and it has to have a correction we can write.
+
+        Provider is deliberately *not* a requirement. The measurement compares
+        arrival times of the same stream, so whatever synchronisation error a
+        protocol introduces is simply part of what gets measured and corrected
+        — as long as it is stable, and the outlier check in
+        :mod:`spinalign.calibration.measure` is what notices when it is not.
+        Sendspin gives the tightest guarantee, which is worth telling the user
+        about, but demanding it excluded every speaker on real systems where
+        the same devices are exposed through another provider.
         """
         return (
-            self.is_sendspin
-            and self.available
+            self.available
+            and self.enabled
+            and not self.hidden
             and self.renders_audio
             and self.supports_sync_adjust
         )
@@ -77,14 +95,14 @@ class PlayerInfo:
         """Why this player is sitting out, in words the UI can show."""
         if self.is_calibratable:
             return None
-        if not self.is_sendspin:
-            return self.provider or "не Sendspin"
+        if not self.enabled:
+            return "выключена в Music Assistant"
         if not self.available:
             return "недоступна"
-        if self.player_type == "group":
-            return "группа, а не колонка"
         if not self.renders_audio:
-            return "служебный плеер, не колонка"
+            return "группа, а не колонка"
+        if self.hidden:
+            return "скрыта в Music Assistant"
         return "нет настройки sync_adjust"
 
 

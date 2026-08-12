@@ -190,13 +190,24 @@ async def test_refuses_to_calibrate_a_single_speaker():
         await calibrate(server, recorder, sleep=clock.sleep)
 
 
-async def test_non_sendspin_players_are_left_alone():
-    """The measurement assumes protocol-level sync inside the group, which
-    only Sendspin guarantees, so other providers must not be swept in."""
+async def test_players_from_another_provider_still_calibrate():
+    """Provider is not a requirement. Whatever synchronisation error another
+    protocol introduces is part of what gets measured and corrected; only an
+    *unstable* one is a problem, and the outlier check is what catches that."""
     server, recorder, clock = make_server(snr_db=30.0)
     server.provider = "airplay"
 
-    with pytest.raises(ValueError, match="Sendspin"):
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
+async def test_calibration_needs_two_usable_players():
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.speakers = server.speakers[:1]
+
+    with pytest.raises(ValueError, match="at least two"):
         await calibrate(server, recorder, sleep=clock.sleep)
 
 

@@ -61,7 +61,10 @@ async def determine_sign(
     cfg = config or SessionConfig()
     players = [p for p in await backend.list_players() if p.is_calibratable]
     if len(players) < 2:
-        raise ValueError("need at least two available Sendspin players to probe the sign")
+        raise ValueError(
+            "need at least two players that make a sound and carry a sync_adjust "
+            "setting to probe the sign"
+        )
 
     reference = reference_id or players[0].player_id
     probe = next((p for p in players if p.player_id != reference), None)

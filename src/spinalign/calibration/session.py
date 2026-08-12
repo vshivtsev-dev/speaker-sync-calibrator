@@ -287,7 +287,10 @@ async def calibrate(
     cfg = config or SessionConfig()
     players = [p for p in await backend.list_players() if p.is_calibratable]
     if len(players) < 2:
-        raise ValueError("need at least two available Sendspin players to calibrate")
+        raise ValueError(
+            "need at least two players that make a sound and carry a sync_adjust "
+            "setting"
+        )
 
     _report(progress, stage="pass", which="before", players=len(players))
     before = await measure_once(
