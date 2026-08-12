@@ -1,10 +1,10 @@
 """The web layer: a phone holds the microphone, this holds everything else.
 
-Plain HTTP on a single port. TLS is a reverse proxy's job — the app is meant
-to sit behind Traefik, which terminates with a real certificate. That matters
-more than it sounds: browsers only grant ``getUserMedia`` in a secure context,
-so a phone needs a trusted ``https://`` origin, and a properly issued one from
-the proxy beats a self-signed certificate the user has to click past.
+Plain HTTP on a single port. TLS is a reverse proxy's job. That matters more
+than it sounds: browsers only grant ``getUserMedia`` in a secure context, so a
+phone needs a trusted ``https://`` origin, and a properly issued certificate
+from whatever sits in front beats a self-signed one the user has to click
+past.
 
 Two routes stay deliberately unauthenticated, and both have a reason:
 

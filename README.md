@@ -164,9 +164,13 @@ cp .env.example .env   # fill in the four variables above
 docker compose up -d --build
 ```
 
-`docker-compose.yml` carries Traefik router labels as an example; Dokploy can
-set them from its own UI instead, in which case keep the environment block and
-drop the labels. Either way the service port is `8080`.
+The compose file defines the container and nothing else — routing, TLS and
+certificates are left to whatever proxy you put in front. The service listens
+on `8080`, and reads `X-Forwarded-Proto` to decide whether to mark its session
+cookie `Secure`, so a proxy terminating TLS needs to pass that header.
+
+The `/data` volume is the part not to skip: it holds the saved positions and
+the probed sign, and without it both are gone on every restart.
 
 ## Status
 

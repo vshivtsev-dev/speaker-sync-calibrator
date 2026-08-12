@@ -27,7 +27,7 @@ USER spinalign
 VOLUME ["/data"]
 
 # Fixed inside the container; map it to whatever you like from outside. The
-# health check below and the Traefik service port both assume this value.
+# health check below assumes this value.
 EXPOSE 8080
 
 # /healthz is deliberately outside the access-token check so this works
