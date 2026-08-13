@@ -28,6 +28,16 @@ logger = logging.getLogger("spinalign.ma")
 
 DEFAULT_CONNECT_TIMEOUT = 30.0
 
+# Names the delay setting has gone by, most likely first.
+DELAY_KEYS = (SYNC_ADJUST_KEY, "output_sync_adjust", "sync_delay", "delay_correction")
+
+# Fallback identification, for when it has been renamed again. A delay
+# correction is an integer setting, spans a few hundred milliseconds either
+# way, and says so in its key or its label.
+DELAY_WORDS = ("sync", "delay")
+MIN_DELAY_SPAN_MS = 100.0
+MAX_DELAY_SPAN_MS = 20_000.0
+
 
 class MusicAssistantBackend:
     """Implements :class:`spinalign.ma.backend.SpeakerBackend` over the real API.
@@ -99,22 +109,22 @@ class MusicAssistantBackend:
     # ------------------------------------------------------------------ port
 
     async def list_players(self) -> list[PlayerInfo]:
-        """List players, with each one's ``sync_adjust`` already attached.
+        """List players, with each one's delay setting already located.
 
-        The *full* per-player config is used rather than the bulk listing.
-        The listing turned out to carry only values that had been explicitly
-        stored, so a setting left at its default looked absent and its speaker
-        was wrongly ruled out. The full config carries the entry definitions,
-        which is what "does this player have the setting" actually means.
+        Support is decided from the player's config *entries* — the
+        definitions of what settings it has — not from its stored values. A
+        value only appears once somebody has changed it, so reading values
+        made every speaker sitting at the default look as though it had no
+        such setting at all.
 
-        Asking for the value by key name is avoided: that raises for players
-        without the entry, which is how a sync group once took down startup.
-        Reading it out of the whole config makes absence just an absent key.
+        Asking for a value by key name is avoided throughout: that raises for
+        players without the entry, which is how a sync group once took down
+        startup. An absent entry is simply an absent entry here.
         """
         players = []
         for player in self._client.players.players:
-            config = await self._player_config(player.player_id)
-            raw = config.get_value(SYNC_ADJUST_KEY) if config is not None else None
+            entries = await self._config_entries(player.player_id)
+            delay = find_delay_entry(entries)
             players.append(
                 PlayerInfo(
                     player_id=player.player_id,
@@ -128,39 +138,46 @@ class MusicAssistantBackend:
                     enabled=bool(getattr(player, "enabled", True)),
                     hidden=bool(getattr(player, "hide_in_ui", False)),
                     output_protocols=tuple(
-                        _type_name(p) for p in getattr(player, "output_protocols", ()) or ()
+                        _protocol_domain(p)
+                        for p in getattr(player, "output_protocols", ()) or ()
                     ),
-                    active_output_protocol=(
-                        _type_name(active)
-                        if (active := getattr(player, "active_output_protocol", None))
-                        else None
+                    active_output_protocol=_protocol_domain(
+                        getattr(player, "active_output_protocol", None)
                     ),
-                    sync_adjust_ms=_as_int(raw),
-                    supports_sync_adjust=_has_sync_adjust(config),
+                    sync_adjust_ms=_current_value(delay),
+                    sync_adjust_key=delay.key if delay is not None else None,
+                    config_keys=tuple(entry.key for entry in entries),
                 )
             )
         return players
 
-    async def _player_config(self, player_id: str):
-        """The player's full config, or ``None`` if the server refuses it.
+    async def _config_entries(self, player_id: str) -> list:
+        """The player's config *entries*, or an empty list if refused.
 
         Groups and other oddities can fail here; that is information, not a
         reason to abandon the whole listing.
         """
         try:
-            return await self._client.config.get_player_config(player_id)
+            return list(await self._client.config.get_player_config_entries(player_id))
         except Exception as error:  # noqa: BLE001 - any failure means "unknown"
-            logger.debug("no config for player %s: %s", player_id, error)
-            return None
+            logger.debug("no config entries for player %s: %s", player_id, error)
+            return []
 
     async def get_sync_adjust(self, player_id: str) -> int:
-        config = await self._client.config.get_player_config(player_id)
-        return _as_int(config.get_value(SYNC_ADJUST_KEY))
+        return _current_value(find_delay_entry(await self._config_entries(player_id)))
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
-        await self._client.config.save_player_config(
-            player_id, {SYNC_ADJUST_KEY: int(milliseconds)}
-        )
+        # Looked up rather than assumed: the key differs between Music
+        # Assistant versions, and writing to a name this server does not have
+        # would fail loudly at best and land somewhere unrelated at worst.
+        delay = find_delay_entry(await self._config_entries(player_id))
+        if delay is None:
+            raise RuntimeError(
+                f"player {player_id} has no delay setting to write; "
+                "its config keys are: "
+                + ", ".join(e.key for e in await self._config_entries(player_id))
+            )
+        await self._client.config.save_player_config(player_id, {delay.key: int(milliseconds)})
 
     async def set_muted(self, player_id: str, muted: bool) -> None:
         await self._client.players.volume_mute(player_id, bool(muted))
@@ -181,24 +198,74 @@ class MusicAssistantBackend:
         await self._client.players.stop(player_id)
 
 
-def _has_sync_adjust(config) -> bool:
-    """Whether this player is known to carry the setting.
+def find_delay_entry(entries):
+    """Pick the config entry that carries this player's delay correction.
 
-    An *empty* config is absence of evidence, not evidence of absence: some
-    servers answer without entry definitions at all, and concluding
-    "unsupported" from that would rule out every speaker. Only a populated
-    config that lacks the key is treated as a real no.
+    By name first, since that is unambiguous when it matches. Falling back to
+    shape rather than giving up, because Music Assistant renames settings
+    between releases and an older client should not conclude that a speaker
+    has no delay at all just because the name moved: a delay correction is an
+    integer spanning a few hundred milliseconds either way, and says "sync" or
+    "delay" somewhere.
+
+    Picking wrong is survivable. :mod:`spinalign.calibration.validate` probes
+    the setting with a known offset and reports "asked for +100 ms, nothing
+    moved" — so a bad guess shows up as an inconclusive result rather than a
+    quietly ruined calibration.
     """
-    if config is None:
+    usable = [e for e in entries if not getattr(e, "hidden", False) and not getattr(e, "read_only", False)]
+    by_key = {e.key: e for e in usable}
+
+    for name in DELAY_KEYS:
+        if name in by_key:
+            return by_key[name]
+
+    return next((e for e in usable if _looks_like_a_delay(e)), None)
+
+
+def _looks_like_a_delay(entry) -> bool:
+    if _type_name(getattr(entry, "type", None)) != "integer":
         return False
-    values = getattr(config, "values", None) or {}
-    if not values:
-        return True
-    return SYNC_ADJUST_KEY in values
+
+    span = _range_span(getattr(entry, "range", None))
+    if span is None or not MIN_DELAY_SPAN_MS <= span <= MAX_DELAY_SPAN_MS:
+        return False
+
+    text = f"{entry.key} {getattr(entry, 'label', '') or ''}".lower()
+    return any(word in text for word in DELAY_WORDS)
+
+
+def _range_span(value) -> float | None:
+    try:
+        low, high = value
+        return float(high) - float(low)
+    except (TypeError, ValueError):
+        return None
+
+
+def _current_value(entry) -> int:
+    """An entry's value, falling back to its default when never set."""
+    if entry is None:
+        return 0
+    value = getattr(entry, "value", None)
+    return _as_int(value if value is not None else getattr(entry, "default_value", None))
+
+
+def _protocol_domain(protocol) -> str | None:
+    """The protocol's domain, e.g. ``sendspin``.
+
+    ``OutputProtocol`` is a dataclass, not an enum, so the generic
+    "``.value`` or ``str()``" treatment printed its whole repr into the UI and
+    made every protocol comparison fail.
+    """
+    if protocol is None:
+        return None
+    domain = getattr(protocol, "protocol_domain", None)
+    return str(domain) if domain else _type_name(protocol)
 
 
 def _type_name(player_type) -> str:
-    """Normalise a PlayerType enum (or a plain string) to its value."""
+    """Normalise an enum (or a plain string) to its value."""
     return str(getattr(player_type, "value", player_type) or "player")
 
 

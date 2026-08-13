@@ -246,6 +246,10 @@ def create_app(state: AppState) -> web.Application:
                         "sync_adjust_ms": p.sync_adjust_ms,
                         "calibratable": p.is_calibratable,
                         "excluded_because": p.exclusion_reason,
+                        "sync_adjust_key": p.sync_adjust_key,
+                        # Shown when no delay setting was found, so the next
+                        # round of diagnosis is a glance rather than a call.
+                        "config_keys": list(p.config_keys),
                     }
                     for p in found
                 ],

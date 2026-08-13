@@ -157,7 +157,13 @@ async function refreshPlayers() {
 
   const rows = players.map((p) => `
     <tr>
-      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span></td>
+      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
+        // When the delay setting was not found, show what the server did
+        // report: seeing the real names turns a mystery into a one-line fix.
+        !p.calibratable && p.config_keys && p.config_keys.length
+          ? `<br><span class="sub">настройки: ${escapeHtml(p.config_keys.join(', '))}</span>`
+          : ''
+      }</td>
       <td class="num">${p.calibratable
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
         : '—'}</td>

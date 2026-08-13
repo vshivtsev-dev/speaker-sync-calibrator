@@ -171,7 +171,7 @@ async def test_a_sync_group_reported_alongside_the_speakers_is_ignored():
             name="Везде",
             provider="sendspin",
             player_type="group",
-            supports_sync_adjust=False,
+            sync_adjust_key=None,
         )
     ]
 

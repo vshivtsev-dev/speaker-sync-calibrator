@@ -140,8 +140,8 @@ async def test_an_excluded_player_says_why(state):
     """The list is the only place a user can find out why a speaker is sitting
     out, so the reason travels with it."""
     state.backend.extra_players = [
-        PlayerInfo("sync", "Везде", "sync_group", supports_sync_adjust=False),
-        PlayerInfo("odd", "Без настройки", "universal_player", supports_sync_adjust=False),
+        PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
+        PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
         PlayerInfo("off", "Выключена", "universal_player", available=False),
     ]
     client = await client_for(create_app(state))
@@ -152,7 +152,7 @@ async def test_an_excluded_player_says_why(state):
 
     reasons = {p["name"]: p["excluded_because"] for p in payload["players"]}
     assert reasons["Везде"] == "группа, а не колонка"
-    assert reasons["Без настройки"] == "нет настройки sync_adjust"
+    assert reasons["Без настройки"] == "нет настройки задержки"
     assert reasons["Выключена"] == "недоступна"
     assert reasons["Кухня (ESP32)"] is None
 

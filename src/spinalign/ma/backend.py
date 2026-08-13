@@ -41,6 +41,22 @@ class PlayerInfo:
     volume_level: int = 50
     muted: bool = False
     sync_adjust_ms: int = 0
+    sync_adjust_key: str | None = SYNC_ADJUST_KEY
+    """The config key that actually carries the delay on *this* server.
+
+    Not a constant, because Music Assistant renames and reshuffles settings
+    between releases and this client will routinely be older than the server.
+    ``None`` means no such setting was found, which is the one thing that
+    genuinely rules a speaker out.
+    """
+
+    config_keys: tuple[str, ...] = ()
+    """Every config key the server reported for this player.
+
+    Carried purely so the UI can show them when the delay setting was not
+    found: seeing what *is* there turns a mystery into a one-line fix.
+    """
+
     player_type: str = "player"
     enabled: bool = True
     hidden: bool = False
@@ -53,12 +69,15 @@ class PlayerInfo:
     while still carrying the stream over Sendspin. The provider says nothing
     about the synchronisation guarantee; the output protocol does.
     """
-    supports_sync_adjust: bool = True
-    """Whether this player's config actually carries a ``sync_adjust`` entry.
+    @property
+    def supports_sync_adjust(self) -> bool:
+        """Whether a delay setting was found for this player.
 
-    This is the real gate. A speaker we cannot write a correction to cannot be
-    calibrated, whatever it is called or whichever provider exposes it.
-    """
+        This is the real gate. A speaker we cannot write a correction to
+        cannot be calibrated, whatever the setting is called or whichever
+        provider exposes it.
+        """
+        return self.sync_adjust_key is not None
 
     @property
     def transport(self) -> str:
@@ -130,7 +149,7 @@ class PlayerInfo:
             return "группа, а не колонка"
         if self.hidden:
             return "скрыта в Music Assistant"
-        return "нет настройки sync_adjust"
+        return "нет настройки задержки"
 
 
 @runtime_checkable
