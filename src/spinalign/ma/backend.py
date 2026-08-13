@@ -9,7 +9,7 @@ rather than scattered through the session logic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 SENDSPIN_PROVIDER = "sendspin"
@@ -69,6 +69,16 @@ class PlayerInfo:
     while still carrying the stream over Sendspin. The provider says nothing
     about the synchronisation guarantee; the output protocol does.
     """
+
+    user_enabled: bool = True
+    """The manual switch: whether the user wants this speaker taken part in.
+
+    Separate from every other exclusion because it is not a judgement about
+    the speaker at all. A subwoofer, a speaker in another room, one whose delay
+    was set by hand and should stay that way — all of them are perfectly
+    capable, and none of them should be measured or written to.
+    """
+
     @property
     def supports_sync_adjust(self) -> bool:
         """Whether a delay setting was found for this player.
@@ -117,7 +127,8 @@ class PlayerInfo:
         """Whether this player can take part in a calibration session.
 
         The requirements are only what the measurement genuinely needs: it has
-        to make a sound, and it has to have a correction we can write.
+        to make a sound, it has to have a correction we can write, and the user
+        has to want it in.
 
         Provider is deliberately *not* a requirement. The measurement compares
         arrival times of the same stream, so whatever synchronisation error a
@@ -129,7 +140,8 @@ class PlayerInfo:
         the same devices are exposed through another provider.
         """
         return (
-            self.available
+            self.user_enabled
+            and self.available
             and self.enabled
             and not self.hidden
             and self.renders_audio
@@ -138,9 +150,16 @@ class PlayerInfo:
 
     @property
     def exclusion_reason(self) -> str | None:
-        """Why this player is sitting out, in words the UI can show."""
+        """Why this player is sitting out, in words the UI can show.
+
+        The manual switch is reported ahead of everything else. It is the one
+        reason the user can act on immediately, and hiding it behind "недоступна"
+        would leave them flipping a switch whose state they cannot see.
+        """
         if self.is_calibratable:
             return None
+        if not self.user_enabled:
+            return "выключена вручную"
         if not self.enabled:
             return "выключена в Music Assistant"
         if not self.available:
@@ -150,6 +169,52 @@ class PlayerInfo:
         if self.hidden:
             return "скрыта в Music Assistant"
         return "нет настройки задержки"
+
+
+@dataclass(frozen=True)
+class SelectedSpeakers:
+    """A backend seen through the user's manual on/off switches.
+
+    The switches are applied at the one place players are listed, rather than
+    by teaching every caller about a set of excluded ids. A speaker that is off
+    reports ``user_enabled=False``, which already makes it fail
+    :attr:`PlayerInfo.is_calibratable` — and the session and the profile loader
+    both filter on exactly that, so they need no changes at all. It also drops
+    out of the playback group the session builds, so it stays silent during a
+    measurement instead of playing over it.
+
+    Writes to a switched-off speaker are refused rather than passed through.
+    "Leave this one alone" is the whole point of the switch, so it is enforced
+    here instead of being trusted to hold in every caller.
+    """
+
+    inner: SpeakerBackend
+    disabled: frozenset[str] = frozenset()
+
+    async def list_players(self) -> list[PlayerInfo]:
+        return [
+            replace(player, user_enabled=player.player_id not in self.disabled)
+            for player in await self.inner.list_players()
+        ]
+
+    async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
+        if player_id in self.disabled:
+            raise ValueError(
+                f"{player_id} is switched off by hand, so its delay is left alone"
+            )
+        await self.inner.set_sync_adjust(player_id, milliseconds)
+
+    async def set_muted(self, player_id: str, muted: bool) -> None:
+        await self.inner.set_muted(player_id, muted)
+
+    async def set_group(self, leader_id: str, member_ids: list[str]) -> None:
+        await self.inner.set_group(leader_id, member_ids)
+
+    async def play_url(self, player_id: str, url: str) -> None:
+        await self.inner.play_url(player_id, url)
+
+    async def stop(self, player_id: str) -> None:
+        await self.inner.stop(player_id)
 
 
 @runtime_checkable

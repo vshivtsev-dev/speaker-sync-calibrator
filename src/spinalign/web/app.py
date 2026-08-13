@@ -37,7 +37,7 @@ from spinalign.calibration.session import (
 )
 from spinalign.calibration.validate import determine_sign
 from spinalign.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
-from spinalign.ma.backend import SpeakerBackend
+from spinalign.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -84,6 +84,14 @@ class AppState:
     pretending to save.
     """
 
+    disabled_players: set[str] = field(default_factory=set)
+    """Speakers switched off by hand, by player id.
+
+    Held here as well as in the store so the switches work even when no state
+    directory is configured — they are then simply forgotten on restart, the
+    same deal the probed sign gets.
+    """
+
     sign: int = 1
     sign_checked: bool = False
     busy: bool = False
@@ -94,11 +102,30 @@ class AppState:
     def signal_url(self, signal: TestSignal) -> str:
         return f"{self.audio_base_url}/signal.wav?chirps={signal.chirp_count}"
 
+    @property
+    def speakers(self) -> SpeakerBackend:
+        """The backend with the manual switches applied.
+
+        A snapshot per call, deliberately: a job then works from one consistent
+        set of speakers for its whole run, so flipping a switch cannot change
+        what is being measured half way through.
+        """
+        return SelectedSpeakers(self.backend, frozenset(self.disabled_players))
+
     def adopt_store(self, store: ProfileStore) -> None:
-        """Attach a store and take its remembered sign as the starting point."""
+        """Attach a store and take what it remembers as the starting point."""
         self.store = store
         self.sign = store.sign
         self.sign_checked = store.sign_checked
+        self.disabled_players = set(store.disabled_players)
+
+    def set_player_enabled(self, player_id: str, enabled: bool) -> None:
+        if enabled:
+            self.disabled_players.discard(player_id)
+        else:
+            self.disabled_players.add(player_id)
+        if self.store is not None:
+            self.store.set_player_enabled(player_id, enabled)
 
     def remember_sign(self, sign: int, checked: bool) -> None:
         self.sign = sign
@@ -232,7 +259,7 @@ def create_app(state: AppState) -> web.Application:
         return web.json_response({"status": "ok"})
 
     async def players(_: web.Request) -> web.Response:
-        found = await state.backend.list_players()
+        found = await state.speakers.list_players()
         return web.json_response(
             {
                 "players": [
@@ -244,6 +271,11 @@ def create_app(state: AppState) -> web.Application:
                         "is_sendspin": p.is_sendspin,
                         "available": p.available,
                         "sync_adjust_ms": p.sync_adjust_ms,
+                        # The manual switch, reported separately from the
+                        # verdict: the UI has to draw the switch in the
+                        # position the user left it, not in the position the
+                        # rest of the checks would imply.
+                        "enabled": p.user_enabled,
                         "calibratable": p.is_calibratable,
                         "excluded_because": p.exclusion_reason,
                         "sync_adjust_key": p.sync_adjust_key,
@@ -257,6 +289,33 @@ def create_app(state: AppState) -> web.Application:
                 "sign_checked": state.sign_checked,
             }
         )
+
+    async def player_enabled(request: web.Request) -> web.Response:
+        """Flip one speaker's manual switch."""
+        if state.busy:
+            raise web.HTTPConflict(
+                text="Идёт измерение — состав колонок сейчас менять нельзя.",
+                content_type="text/plain",
+            )
+
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            raise web.HTTPBadRequest(text="Expected JSON.", content_type="text/plain") from None
+        if not isinstance(payload.get("enabled"), bool):
+            raise web.HTTPBadRequest(
+                text="enabled must be true or false.", content_type="text/plain"
+            )
+
+        player_id = request.match_info["player_id"]
+        # Checked against the server's own list, so a stale page cannot leave a
+        # switch set for a player that no longer exists.
+        known = {p.player_id for p in await state.backend.list_players()}
+        if player_id not in known:
+            raise web.HTTPNotFound(text="No such player.", content_type="text/plain")
+
+        state.set_player_enabled(player_id, payload["enabled"])
+        return web.json_response({"player_id": player_id, "enabled": payload["enabled"]})
 
     async def signal_wav(request: web.Request) -> web.Response:
         try:
@@ -321,7 +380,7 @@ def create_app(state: AppState) -> web.Application:
 
         state.busy = True
         try:
-            outcome = await apply_profile(state.backend, profile)
+            outcome = await apply_profile(state.speakers, profile)
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error), content_type="text/plain") from error
         finally:
@@ -343,6 +402,7 @@ def create_app(state: AppState) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/api/players", players)
+    app.router.add_post("/api/players/{player_id}/enabled", player_enabled)
     app.router.add_get("/api/profiles", profiles_list)
     app.router.add_post("/api/profiles", profiles_save)
     app.router.add_post("/api/profiles/{name}/apply", profiles_apply)
@@ -423,10 +483,12 @@ async def _run_job(
 
     state.busy = True
     progress = outbox.put_nowait
+    # One view of the speakers for the whole job, switches already applied.
+    speakers = state.speakers
     try:
         if kind == "probe_sign":
             check = await determine_sign(
-                state.backend,
+                speakers,
                 recorder,
                 config=state.session_config,
                 signal_url=state.signal_url,
@@ -444,7 +506,7 @@ async def _run_job(
             return
 
         report = await calibrate(
-            state.backend,
+            speakers,
             recorder,
             config=state.session_config,
             signal_url=state.signal_url,

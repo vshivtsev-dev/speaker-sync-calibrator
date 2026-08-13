@@ -160,6 +160,13 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+Alongside those automatic checks there is a manual switch per speaker in the
+UI. Being capable is not the same as being wanted: a subwoofer, a speaker in
+another room, one whose delay you set by hand. A speaker switched off is not
+measured, not put in the playback group, and not written to — the write is
+refused at the boundary rather than left to a filter somewhere upstream to
+remember. The switches live in the state file, so they survive a restart.
+
 ### Listening positions
 
 A calibration belongs to the spot the phone was standing in — the compensation

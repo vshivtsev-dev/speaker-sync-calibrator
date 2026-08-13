@@ -187,6 +187,113 @@ async def test_microphone_processing_is_disabled_in_the_client(state):
     assert "autoGainControl: false" in app_js
 
 
+# -------------------------------------------------------- the manual switch
+
+
+async def test_switching_a_speaker_off_takes_it_out_of_the_session(state):
+    client = await client_for(create_app(state))
+    try:
+        flipped = await client.post("/api/players/avr/enabled", json={"enabled": False})
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    assert flipped.status == 200
+    by_id = {p["player_id"]: p for p in payload["players"]}
+    assert by_id["avr"]["enabled"] is False
+    assert by_id["avr"]["calibratable"] is False
+    assert by_id["avr"]["excluded_because"] == "выключена вручную"
+    # Nothing else moves.
+    assert by_id["esp32"]["calibratable"] is True
+
+
+async def test_a_switched_off_speaker_can_be_switched_back_on(state):
+    """The switch is the user's own doing, so it has to be reversible from the
+    same screen — including when switching off left too few to calibrate."""
+    client = await client_for(create_app(state))
+    try:
+        await client.post("/api/players/avr/enabled", json={"enabled": False})
+        await client.post("/api/players/bt/enabled", json={"enabled": False})
+        await client.post("/api/players/avr/enabled", json={"enabled": True})
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    by_id = {p["player_id"]: p for p in payload["players"]}
+    assert by_id["avr"]["calibratable"] is True
+    assert by_id["bt"]["calibratable"] is False
+
+
+async def test_the_switch_is_remembered_across_a_restart(tmp_path):
+    client = await client_for(create_app(with_store(make_state(), tmp_path)))
+    try:
+        await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    restarted = with_store(make_state(), tmp_path)
+
+    assert restarted.disabled_players == {"bt"}
+
+
+async def test_the_switch_works_without_a_state_directory(state):
+    """Unlike saving a position, this must not need a disk: it only decides
+    what the run in front of the user covers."""
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 200
+    assert state.disabled_players == {"bt"}
+
+
+async def test_switching_an_unknown_player_is_a_404(state):
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/ghost/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 404
+    assert state.disabled_players == set()
+
+
+async def test_the_switch_needs_a_boolean(state):
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": "нет"})
+    finally:
+        await client.close()
+
+    assert response.status == 400
+
+
+async def test_the_switch_is_refused_mid_measurement(state):
+    """Changing the cast half way through a run would leave a report about a
+    set of speakers that no longer matches what was measured."""
+    state.busy = True
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 409
+
+
+async def test_the_switch_is_behind_the_token(guarded):
+    client = await client_for(create_app(guarded))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 401
+    assert guarded.disabled_players == set()
+
+
 # ---------------------------------------------------------------- the token
 
 

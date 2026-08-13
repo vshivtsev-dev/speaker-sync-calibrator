@@ -21,9 +21,21 @@ function setStatus(text, kind) {
   el('dot').className = 'dot' + (kind ? ' ' + kind : '');
 }
 
-function setBusy(busy) {
-  el('run').disabled = busy;
-  el('probe').disabled = busy;
+let busy = false;      // a measurement is running
+let runnable = false;  // enough speakers are switched on to run one
+
+// Kept apart deliberately. Switching a speaker off can leave too few to
+// calibrate, and if that disabled the switches too, the user would have no way
+// to switch it back on again.
+function refreshControls() {
+  el('run').disabled = busy || !runnable;
+  el('probe').disabled = busy || !runnable;
+  document.querySelectorAll('#players .toggle').forEach((b) => { b.disabled = busy; });
+}
+
+function setBusy(value) {
+  busy = value;
+  refreshControls();
 }
 
 function setProgress(fraction) {
@@ -156,7 +168,7 @@ async function refreshPlayers() {
   players = data.players;
 
   const rows = players.map((p) => `
-    <tr>
+    <tr class="${p.enabled ? '' : 'off'}">
       <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
         // When the delay setting was not found, show what the server did
         // report: seeing the real names turns a mystery into a one-line fix.
@@ -167,9 +179,15 @@ async function refreshPlayers() {
       <td class="num">${p.calibratable
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
         : '—'}</td>
-      <td><span class="pill ${p.calibratable ? 'on' : 'off'}">${
-        escapeHtml(p.calibratable ? 'готова' : (p.excluded_because || 'не участвует'))
-      }</span></td>
+      <td>
+        <span class="pill ${p.calibratable ? 'on' : 'off'}">${
+          escapeHtml(p.calibratable ? 'готова' : (p.excluded_because || 'не участвует'))
+        }</span>
+        <button class="toggle" data-toggle="${escapeAttr(p.player_id)}"
+                data-enable="${p.enabled ? '0' : '1'}"${busy ? ' disabled' : ''}>${
+          p.enabled ? 'выключить' : 'включить'
+        }</button>
+      </td>
     </tr>`).join('');
 
   el('players').innerHTML =
@@ -177,12 +195,13 @@ async function refreshPlayers() {
      <tbody>${rows || '<tr><td colspan="3">Music Assistant не отдал ни одного плеера</td></tr>'}</tbody>`;
 
   const ready = players.filter((p) => p.calibratable);
-  setBusy(ready.length < 2);
+  runnable = ready.length >= 2;
+  refreshControls();
 
-  if (ready.length < 2) {
+  if (!runnable) {
     setStatus(
       players.length
-        ? 'Нужно минимум две колонки с настройкой sync_adjust. Смотрите причины в списке выше.'
+        ? 'Нужно минимум две включённые колонки. Причины — в списке выше.'
         : 'Music Assistant не отдал ни одного плеера.',
       'err',
     );
@@ -196,6 +215,23 @@ async function refreshPlayers() {
   } else {
     setStatus(`Готово, колонок: ${ready.length}. Положите телефон туда, где слушаете.`);
   }
+}
+
+async function setPlayerEnabled(playerId, enabled) {
+  try {
+    const response = await fetch(`/api/players/${encodeURIComponent(playerId)}/enabled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) throw new Error((await response.text()).trim());
+  } catch (error) {
+    setStatus('Не переключилось: ' + error.message, 'err');
+    return;
+  }
+  // The list owns the status line, so it has the last word on what the
+  // switch changed — including whether a run is still possible.
+  await refreshPlayers();
 }
 
 // ------------------------------------------------------------------- report
@@ -349,6 +385,11 @@ el('probe').addEventListener('click', () => start('probe_sign'));
 el('save').addEventListener('click', saveProfile);
 
 // Delegated so the list can be re-rendered without rebinding every row.
+el('players').addEventListener('click', (event) => {
+  const toggle = event.target.closest('[data-toggle]');
+  if (toggle) setPlayerEnabled(toggle.dataset.toggle, toggle.dataset.enable === '1');
+});
+
 el('profiles').addEventListener('click', (event) => {
   const apply = event.target.closest('[data-apply]');
   if (apply) return applyProfile(apply.dataset.apply);

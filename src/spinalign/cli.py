@@ -192,8 +192,7 @@ async def _players(args) -> int:
         # renamed setting from an absent one is to look at what is there.
         print()
         for player in players:
-            config = await backend._player_config(player.player_id)
-            keys = sorted(getattr(config, "values", None) or {}) if config else []
+            keys = sorted(player.config_keys)
             print(f"{player.name}: {', '.join(keys) if keys else '(no config entries returned)'}")
 
     usable = sum(1 for p in players if p.is_calibratable)

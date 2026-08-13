@@ -16,7 +16,7 @@ from sim.virtual_room import RoomConfig, VirtualSpeaker
 from spinalign.calibration.profiles import Profile, apply_profile
 from spinalign.calibration.session import SessionConfig, calibrate, measure_once
 from spinalign.calibration.validate import determine_sign
-from spinalign.ma.backend import PlayerInfo
+from spinalign.ma.backend import PlayerInfo, SelectedSpeakers
 
 
 def make_server(speakers=None, **room_kwargs):
@@ -181,6 +181,33 @@ async def test_a_sync_group_reported_alongside_the_speakers_is_ignored():
     assert report.spread_after_ms < 2.0
     assert "syncgroup_wgsar5sd" not in {c.player_id for c in report.solution.corrections}
     assert "syncgroup_wgsar5sd" not in dict(report.applied)
+
+
+async def test_a_speaker_switched_off_by_hand_sits_the_session_out():
+    """The manual switch is the user saying "leave this one alone", so the
+    speaker must be neither measured, nor grouped, nor written to — while the
+    remaining two still come out aligned."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    chosen = SelectedSpeakers(server, frozenset({"bt"}))
+
+    report = await calibrate(chosen, recorder, sleep=clock.sleep)
+
+    assert {c.player_id for c in report.solution.corrections} == {"esp32", "avr"}
+    assert "bt" not in {player_id for player_id, _ in server.writes}
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
+async def test_writing_to_a_switched_off_speaker_is_refused():
+    """Enforced at the boundary rather than trusted to hold in every caller —
+    the switch is worth nothing if one forgotten filter can defeat it."""
+    server, _, _ = make_server()
+    chosen = SelectedSpeakers(server, frozenset({"bt"}))
+
+    with pytest.raises(ValueError, match="switched off"):
+        await chosen.set_sync_adjust("bt", 120)
+
+    assert server.writes == []
 
 
 async def test_refuses_to_calibrate_a_single_speaker():

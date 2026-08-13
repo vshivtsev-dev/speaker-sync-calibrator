@@ -71,11 +71,23 @@ def test_the_probed_sign_survives_a_restart(tmp_path):
     assert reopened.sign_checked
 
 
+def test_the_manual_switches_survive_a_restart(tmp_path):
+    store = ProfileStore.open(tmp_path)
+    store.set_player_enabled("bt", False)
+    store.set_player_enabled("avr", False)
+    store.set_player_enabled("avr", True)
+
+    reopened = ProfileStore.open(tmp_path)
+
+    assert reopened.disabled_players == {"bt"}
+
+
 def test_a_fresh_store_assumes_the_documented_convention(tmp_path):
     store = ProfileStore.open(tmp_path)
 
     assert store.sign == 1
     assert not store.sign_checked
+    assert store.disabled_players == frozenset()
     assert store.list() == []
 
 
