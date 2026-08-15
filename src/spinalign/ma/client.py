@@ -38,6 +38,18 @@ DELAY_WORDS = ("sync", "delay")
 MIN_DELAY_SPAN_MS = 100.0
 MAX_DELAY_SPAN_MS = 20_000.0
 
+# How Music Assistant reports that it could not fetch the test track. The
+# wording depends on which layer gave up, so several are recognised.
+TRACK_FETCH_MARKERS = (
+    "unable to retrieve info",
+    "cannot connect",
+    "connection refused",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "no route to host",
+    "timed out",
+)
+
 
 class MusicAssistantBackend:
     """Implements :class:`spinalign.ma.backend.SpeakerBackend` over the real API.
@@ -192,10 +204,50 @@ class MusicAssistantBackend:
         # it on one player or group, and restores whatever was playing
         # afterwards. pre_announce must be off — a chime ahead of the track
         # would be unknown audio at an unknown time.
-        await self._client.players.play_announcement(player_id, url, pre_announce=False)
+        try:
+            await self._client.players.play_announcement(player_id, url, pre_announce=False)
+        except Exception as error:
+            # This is the one command where Music Assistant has to reach *back*
+            # to us, so it is the one that exposes a wrong audio base URL — and
+            # it does so as an ffmpeg probe failure, which says nothing about
+            # what to change.
+            if _is_a_track_fetch_failure(str(error), url):
+                raise RuntimeError(unreachable_track_message(url, error)) from error
+            raise
 
     async def stop(self, player_id: str) -> None:
         await self._client.players.stop(player_id)
+
+
+def _is_a_track_fetch_failure(message: str, url: str) -> bool:
+    """Whether a play failure was Music Assistant failing to fetch our track.
+
+    Several phrasings, because the failure lands in a different layer depending
+    on where it broke — the media probe, DNS, or the connection. The URL
+    appearing in the message is the strongest signal of all: Music Assistant
+    quotes what it could not read.
+    """
+    lowered = message.lower()
+    return url.lower() in lowered or any(m in lowered for m in TRACK_FETCH_MARKERS)
+
+
+def unreachable_track_message(url: str, error: Exception) -> str:
+    """Say which setting is wrong, since the raw failure never does.
+
+    This is the single hardest thing to get right when installing the app, and
+    the only command where Music Assistant connects back to us rather than the
+    other way round — so a failure here says nothing about the URL the browser
+    uses, which is the address people naturally reach for.
+    """
+    return (
+        f"Music Assistant не смог загрузить тестовый трек по адресу {url} — "
+        "значит, он не достучался до SpinAlign. Это адрес из переменной "
+        "SPINALIGN_AUDIO_BASE_URL, по которому Music Assistant обращается к нам, "
+        "и он не совпадает с адресом, по которому вы открываете интерфейс. "
+        "Имя docker-сервиса годится, только если Music Assistant стоит в той же "
+        "сети; иначе нужен LAN-адрес хоста и открытый порт. "
+        f"Ответ Music Assistant: {error}"
+    )
 
 
 def find_delay_entry(entries):

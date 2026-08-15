@@ -380,6 +380,59 @@ async def test_announcement_chime_is_switched_off(backend):
     assert call[3] is False
 
 
+async def test_an_unreachable_track_names_the_setting_to_change(backend):
+    """The one command where Music Assistant connects back to us, so the one
+    that exposes a wrong audio base URL — and it reports it as an ffmpeg probe
+    failure, which says nothing about what to change."""
+    adapter, client = backend
+    url = "http://spinalign:8080/signal.wav?chirps=15"
+    client.players.play_announcement = _raising(
+        f"Unable to retrieve info for {url} (Input/output error)"
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        await adapter.play_url("esp32", url)
+
+    message = str(caught.value)
+    assert "SPINALIGN_AUDIO_BASE_URL" in message
+    assert url in message
+    # The original wording survives, so the diagnosis is not thrown away.
+    assert "Input/output error" in message
+
+
+@pytest.mark.parametrize(
+    "reported",
+    [
+        "Cannot connect to host spinalign:8080",
+        "Temporary failure in name resolution",
+        "Connection refused",
+    ],
+)
+async def test_the_other_ways_a_fetch_fails_are_recognised_too(backend, reported):
+    adapter, client = backend
+    client.players.play_announcement = _raising(reported)
+
+    with pytest.raises(RuntimeError, match="SPINALIGN_AUDIO_BASE_URL"):
+        await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
+
+
+async def test_an_unrelated_playback_failure_is_left_alone(backend):
+    """Blaming the URL for every failed play would send the next person off
+    reconfiguring a setting that was right all along."""
+    adapter, client = backend
+    client.players.play_announcement = _raising("Player is powered off")
+
+    with pytest.raises(ValueError, match="powered off"):
+        await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
+
+
+def _raising(message: str):
+    async def refuse(*args, **kwargs):
+        raise ValueError(message)
+
+    return refuse
+
+
 async def test_stop_is_forwarded(backend):
     adapter, client = backend
 
