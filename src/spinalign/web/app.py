@@ -22,7 +22,7 @@ import contextlib
 import json
 import logging
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -48,6 +48,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 RECORDING_TIMEOUT_FLOOR_SECONDS = 30.0
 RECORDING_TIMEOUT_SHARE = 0.5
 """Tail allowance as a fraction of the recording's own length."""
+
+# How many chirps each speaker gets. The floor is the settling guard plus one,
+# so at least one reading survives; the ceiling only keeps a slip of the finger
+# from starting a twenty-minute session.
+MIN_CHIRPS_PER_ROUND = 3
+MAX_CHIRPS_PER_ROUND = 40
 
 TOKEN_COOKIE = "spinalign_token"
 TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
@@ -118,6 +124,17 @@ class AppState:
         self.sign = store.sign
         self.sign_checked = store.sign_checked
         self.disabled_players = set(store.disabled_players)
+        if store.chirps_per_round:
+            self.session_config = replace(
+                self.session_config, chirps_per_round=store.chirps_per_round
+            )
+
+    def set_chirps_per_round(self, chirps: int) -> None:
+        """Take the requested round length, clamped to what is measurable."""
+        chirps = max(MIN_CHIRPS_PER_ROUND, min(MAX_CHIRPS_PER_ROUND, int(chirps)))
+        self.session_config = replace(self.session_config, chirps_per_round=chirps)
+        if self.store is not None:
+            self.store.remember_chirps_per_round(chirps)
 
     def set_player_enabled(self, player_id: str, enabled: bool) -> None:
         if enabled:
@@ -287,6 +304,12 @@ def create_app(state: AppState) -> web.Application:
                 ],
                 "sign": state.sign,
                 "sign_checked": state.sign_checked,
+                "chirps_per_round": state.session_config.chirps_per_round,
+                "chirps_range": [MIN_CHIRPS_PER_ROUND, MAX_CHIRPS_PER_ROUND],
+                # So the UI can quote a duration without duplicating the
+                # session's own arithmetic.
+                "guard_chirps": state.session_config.guard_chirps,
+                "period_seconds": state.session_config.period_seconds,
             }
         )
 
@@ -460,6 +483,8 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 if running is not None and not running.done():
                     outbox.put_nowait({"type": "error", "message": "уже идёт измерение"})
                 else:
+                    if isinstance(payload.get("chirps_per_round"), int):
+                        state.set_chirps_per_round(payload["chirps_per_round"])
                     running = asyncio.create_task(_run_job(kind, state, recorder, outbox))
     finally:
         pump_task.cancel()

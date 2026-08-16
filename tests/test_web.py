@@ -25,7 +25,14 @@ from sim.fake_ma import (
 from spinalign.calibration.profiles import ProfileStore
 from spinalign.calibration.session import SessionConfig, calibrate
 from spinalign.ma.backend import PlayerInfo
-from spinalign.web.app import TOKEN_COOKIE, AppState, create_app, serve
+from spinalign.web.app import (
+    MAX_CHIRPS_PER_ROUND,
+    MIN_CHIRPS_PER_ROUND,
+    TOKEN_COOKIE,
+    AppState,
+    create_app,
+    serve,
+)
 
 TOKEN = "s3cret-token"
 
@@ -185,6 +192,61 @@ async def test_microphone_processing_is_disabled_in_the_client(state):
     assert "echoCancellation: false" in app_js
     assert "noiseSuppression: false" in app_js
     assert "autoGainControl: false" in app_js
+
+
+# ---------------------------------------------------------- the round length
+
+
+async def test_the_round_length_is_reported_with_what_it_means(state):
+    """The UI quotes a duration and a reading count, so it needs the session's
+    own numbers rather than a second copy of them."""
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    assert payload["chirps_per_round"] == 5
+    assert payload["guard_chirps"] == 2
+    assert payload["period_seconds"] == pytest.approx(1.3)
+    assert payload["chirps_range"] == [MIN_CHIRPS_PER_ROUND, MAX_CHIRPS_PER_ROUND]
+
+
+@pytest.mark.parametrize(
+    ("asked", "expected"),
+    [(12, 12), (1, MIN_CHIRPS_PER_ROUND), (9999, MAX_CHIRPS_PER_ROUND)],
+)
+def test_the_round_length_is_clamped_to_what_is_measurable(state, asked, expected):
+    """Below the settling guard no reading survives at all, and the ceiling
+    only stops a slip of the finger starting a twenty-minute session."""
+    state.set_chirps_per_round(asked)
+
+    assert state.session_config.chirps_per_round == expected
+
+
+def test_the_round_length_survives_a_restart(tmp_path):
+    with_store(make_state(), tmp_path).set_chirps_per_round(9)
+
+    restarted = with_store(make_state(), tmp_path)
+
+    assert restarted.session_config.chirps_per_round == 9
+
+
+async def test_the_round_length_arrives_with_the_calibrate_request(state):
+    """Sent with the request rather than through a settings route: it belongs
+    to the run being started, and cannot then drift out of step with it."""
+    client = await client_for(create_app(state))
+    try:
+        socket = await client.ws_connect("/ws")
+        await socket.send_json({"type": "calibrate", "chirps_per_round": 8})
+        # The job starts and immediately asks for audio; the value is applied
+        # before the task is created.
+        await socket.receive(timeout=5)
+        await socket.close()
+    finally:
+        await client.close()
+
+    assert state.session_config.chirps_per_round == 8
 
 
 # -------------------------------------------------------- the manual switch

@@ -156,6 +156,8 @@ class MusicAssistantBackend:
                     active_output_protocol=_protocol_domain(
                         getattr(player, "active_output_protocol", None)
                     ),
+                    group_members=tuple(getattr(player, "group_members", ()) or ()),
+                    can_group_with=tuple(getattr(player, "can_group_with", ()) or ()),
                     sync_adjust_ms=_current_value(delay),
                     sync_adjust_key=delay.key if delay is not None else None,
                     config_keys=tuple(entry.key for entry in entries),

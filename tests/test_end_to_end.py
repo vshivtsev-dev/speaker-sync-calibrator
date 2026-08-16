@@ -210,6 +210,34 @@ async def test_writing_to_a_switched_off_speaker_is_refused():
     assert server.writes == []
 
 
+async def test_a_speaker_that_never_joins_the_group_is_named():
+    """Live hardware does this: the speaker plays music perfectly well but sits
+    out the test in silence, because it never joined the sync group and so
+    never received the stream. Left undetected it reads as "no usable chirps",
+    which sends the user hunting for a microphone problem in the room."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.ungroupable = {"bt"}
+
+    with pytest.raises(RuntimeError) as caught:
+        await calibrate(server, recorder, sleep=clock.sleep)
+
+    message = str(caught.value)
+    assert "Спальня (Bluetooth)" in message
+    assert "не встали в одну группу" in message
+
+
+async def test_a_provider_that_reports_no_group_state_is_not_second_guessed():
+    """Absence of evidence is not evidence of absence: refusing to measure when
+    a provider simply never populates the field would ground working setups."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.report_group_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
 async def test_refuses_to_calibrate_a_single_speaker():
     server, recorder, clock = make_server([mixed_speakers()[0]])
 

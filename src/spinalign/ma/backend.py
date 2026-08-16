@@ -70,6 +70,20 @@ class PlayerInfo:
     about the synchronisation guarantee; the output protocol does.
     """
 
+    group_members: tuple[str, ...] = ()
+    """Who is currently synced to this player, including itself.
+
+    The measurement depends entirely on one stream reaching every speaker at
+    once, so this is what proves a speaker is actually going to hear it.
+    """
+
+    can_group_with: tuple[str, ...] = ()
+    """Who this player can be synced with — player ids, or a whole provider.
+
+    Music Assistant will not group across every combination of providers, and
+    a speaker that cannot join the group hears nothing and measures as silence.
+    """
+
     user_enabled: bool = True
     """The manual switch: whether the user wants this speaker taken part in.
 
@@ -147,6 +161,20 @@ class PlayerInfo:
             and self.renders_audio
             and self.supports_sync_adjust
         )
+
+    def can_group_with_player(self, other: "PlayerInfo") -> bool:
+        """Whether Music Assistant will let these two play one stream.
+
+        Unknown counts as yes. ``can_group_with`` is empty on providers that do
+        not report it, and refusing to measure on missing information would
+        ground a working setup — the membership check after grouping is what
+        catches a real failure.
+        """
+        if not self.can_group_with:
+            return True
+        # An entry can name a whole provider instead of a single player, which
+        # is how a provider says "all of mine group with each other".
+        return other.player_id in self.can_group_with or other.provider in self.can_group_with
 
     @property
     def exclusion_reason(self) -> str | None:

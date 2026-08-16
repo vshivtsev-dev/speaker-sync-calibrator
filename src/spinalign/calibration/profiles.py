@@ -163,6 +163,7 @@ class ProfileStore:
         self._sign = 1
         self._sign_checked = False
         self._disabled: set[str] = set()
+        self._chirps_per_round = 0
         self._profiles: dict[str, Profile] = {}
         self._load()
 
@@ -184,6 +185,15 @@ class ProfileStore:
     def remember_sign(self, sign: int, checked: bool) -> None:
         self._sign = 1 if sign not in (1, -1) else sign
         self._sign_checked = bool(checked)
+        self._write()
+
+    @property
+    def chirps_per_round(self) -> int:
+        """Round length last asked for, or 0 when never set."""
+        return self._chirps_per_round
+
+    def remember_chirps_per_round(self, chirps: int) -> None:
+        self._chirps_per_round = int(chirps)
         self._write()
 
     # ------------------------------------------------------ manual switches
@@ -240,6 +250,7 @@ class ProfileStore:
         self._sign = payload.get("sign", 1) if payload.get("sign") in (1, -1) else 1
         self._sign_checked = bool(payload.get("sign_checked", False))
         self._disabled = {str(pid) for pid in payload.get("disabled_players") or []}
+        self._chirps_per_round = int(payload.get("chirps_per_round") or 0)
 
         for name, entry in (payload.get("profiles") or {}).items():
             try:
@@ -253,6 +264,7 @@ class ProfileStore:
             "sign": self._sign,
             "sign_checked": self._sign_checked,
             "disabled_players": sorted(self._disabled),
+            "chirps_per_round": self._chirps_per_round,
             "profiles": {name: profile.to_dict() for name, profile in self._profiles.items()},
         }
 

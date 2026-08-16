@@ -143,6 +143,19 @@
   }
   .link:hover { color: var(--bad); }
 
+  .setting {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  }
+  .setting label { font-size: 13px; color: var(--muted); }
+  .setting input {
+    width: 72px; font: inherit; text-align: right;
+    color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .setting .sub { margin: 0; flex: 1 1 100%; }
+
   /* The manual on/off switch, under each speaker's verdict. */
   .toggle {
     display: block; margin: 5px 0 0 auto;
@@ -175,6 +188,12 @@
       <span id="status">Положите телефон туда, где слушаете, и нажмите «Калибровать».</span>
     </div>
     <div class="bar"><i id="bar"></i></div>
+    <div class="setting">
+      <label for="chirps">Свистов на колонку</label>
+      <input id="chirps" type="number" min="3" max="40" step="1" inputmode="numeric">
+      <span class="sub" id="chirps-note">&nbsp;</span>
+    </div>
+
     <div style="margin-top:14px">
       <button id="run">Калибровать</button>
       <button id="probe" class="secondary">Проверить знак sync_adjust</button>

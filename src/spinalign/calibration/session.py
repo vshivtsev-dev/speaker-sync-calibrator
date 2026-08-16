@@ -181,6 +181,7 @@ async def measure_once(
 
     leader = player_ids[0]
     await backend.set_group(leader, player_ids)
+    await confirm_group(backend, leader, player_ids, sleep=sleep)
 
     # Silence everyone before the track starts so the opening round is clean.
     for player_id in player_ids:
@@ -235,6 +236,74 @@ async def measure_once(
         signal=signal,
         sample_rate=sample_rate,
     )
+
+
+GROUP_CONFIRM_TIMEOUT_SECONDS = 4.0
+GROUP_POLL_SECONDS = 0.5
+
+
+async def confirm_group(
+    backend: SpeakerBackend,
+    leader: str,
+    player_ids: Sequence[str],
+    *,
+    sleep: Sleeper = asyncio.sleep,
+    timeout: float = GROUP_CONFIRM_TIMEOUT_SECONDS,
+) -> None:
+    """Check the speakers really joined the group before playing anything.
+
+    The whole method rests on one stream reaching every speaker at once: that
+    common stream is what gives the rounds a shared time base. A speaker that
+    silently failed to join is not a degraded measurement, it is no measurement
+    — it renders as silence, and the only symptom is "no usable chirps", which
+    reads like a microphone problem and sends the user hunting in the room.
+
+    Missing information is not treated as failure. A provider that never
+    populates ``group_members`` would otherwise ground a setup that works, so
+    the check needs positive evidence of exclusion before it refuses.
+    """
+    deadline = timeout
+    while True:
+        players = {p.player_id: p for p in await backend.list_players()}
+        grouped = set(players[leader].group_members) if leader in players else set()
+        if not grouped:
+            return  # nothing reported: no evidence either way
+
+        missing = [pid for pid in player_ids if pid != leader and pid not in grouped]
+        if not missing:
+            return
+        if deadline <= 0:
+            raise RuntimeError(_group_failure_message(players, leader, missing))
+
+        # Grouping is a command, not a transaction; the state follows it.
+        await sleep(GROUP_POLL_SECONDS)
+        deadline -= GROUP_POLL_SECONDS
+
+
+def _group_failure_message(players: dict, leader: str, missing: Sequence[str]) -> str:
+    def describe(player_id: str) -> str:
+        player = players.get(player_id)
+        return player.name if player else player_id
+
+    names = ", ".join(describe(pid) for pid in missing)
+    lines = [
+        f"эти колонки не встали в одну группу с «{describe(leader)}», "
+        f"поэтому они не услышат тестовый трек: {names}.",
+        "Замер сравнивает время прихода одного и того же потока, так что "
+        "колонка вне группы измерена быть не может.",
+    ]
+
+    leader_player = players.get(leader)
+    for player_id in missing:
+        player = players.get(player_id)
+        if player is None or leader_player is None:
+            continue
+        if not player.can_group_with_player(leader_player):
+            lines.append(
+                f"Music Assistant не объединяет «{player.name}» с «{leader_player.name}» — "
+                "их провайдеры несовместимы; выключите одну из них."
+            )
+    return " ".join(lines)
 
 
 def build_measurements(

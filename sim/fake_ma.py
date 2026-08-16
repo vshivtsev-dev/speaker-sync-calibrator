@@ -60,6 +60,21 @@ class FakeMusicAssistant:
     _muted_now: dict[str, bool] = field(default_factory=dict, init=False)
     _playback_started: float | None = field(default=None, init=False)
     _playing: bool = field(default=False, init=False)
+    ungroupable: set[str] = field(default_factory=set)
+    """Speakers Music Assistant will not put in a group, by player id.
+
+    Real hardware does this — a speaker bridged through its own provider can
+    refuse to sync with the rest — and the symptom is silence in that speaker's
+    round rather than an error, so it is worth being able to reproduce.
+    """
+
+    report_group_state: bool = True
+    """Whether this server tells anyone who is in the group.
+
+    Not every provider does, and the session has to cope with being told
+    nothing rather than treating silence as a refusal.
+    """
+
     _group: list[str] = field(default_factory=list, init=False)
     writes: list[tuple[str, int]] = field(default_factory=list, init=False)
     """Every ``sync_adjust`` write, in order — asserted on by tests."""
@@ -79,6 +94,13 @@ class FakeMusicAssistant:
                 available=True,
                 muted=self._muted_now.get(s.player_id, False),
                 sync_adjust_ms=s.sync_adjust_ms,
+                # Only the leader carries the membership, which is how Music
+                # Assistant reports a sync group.
+                group_members=(
+                    tuple(self._group)
+                    if self.report_group_state and self._group and s.player_id == self._group[0]
+                    else ()
+                ),
             )
             for s in self.speakers
         ] + list(self.extra_players)
@@ -98,7 +120,12 @@ class FakeMusicAssistant:
         self._mutes.append(_MuteEvent(self.clock.now, player_id, muted))
 
     async def set_group(self, leader_id: str, member_ids: list[str]) -> None:
-        self._group = [leader_id, *[m for m in member_ids if m != leader_id]]
+        # A refusal is silent, exactly as it is on real hardware: the command
+        # succeeds and the speaker simply is not in the group afterwards.
+        self._group = [
+            leader_id,
+            *[m for m in member_ids if m != leader_id and m not in self.ungroupable],
+        ]
 
     async def play_url(self, player_id: str, url: str) -> None:
         self._playback_started = self.clock.now
@@ -124,7 +151,10 @@ class FakeMusicAssistant:
 
         config = RoomConfig(**{**self.config.__dict__, "chirp_count": chirp_count})
         rounds = self._rounds(config, chirp_count)
-        recording = render_recording(self.speakers, rounds, config)
+        # A speaker outside the group never receives the stream, so it is
+        # silent no matter what its mute state says.
+        audible = [s for s in self.speakers if s.player_id not in self.ungroupable]
+        recording = render_recording(audible, rounds, config)
         return recording, config.mic_sample_rate
 
     def reference_chirp(self, sample_rate: int | None = None) -> np.ndarray:

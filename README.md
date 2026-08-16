@@ -160,12 +160,32 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+A speaker also has to be able to *join the group*. The whole method rests on
+one stream reaching every speaker at once — that is what gives the rounds a
+common time base — so a speaker Music Assistant will not sync with the others
+receives nothing and records as silence. That is checked before the track
+starts, and the speakers that failed to join are named, because the symptom
+otherwise looks exactly like a microphone problem in the room.
+
 Alongside those automatic checks there is a manual switch per speaker in the
 UI. Being capable is not the same as being wanted: a subwoofer, a speaker in
 another room, one whose delay you set by hand. A speaker switched off is not
 measured, not put in the playback group, and not written to — the write is
 refused at the boundary rather than left to a filter somewhere upstream to
 remember. The switches live in the state file, so they survive a restart.
+
+### Round length
+
+Each speaker gets a run of chirps, of which the first couple are discarded —
+they cover the gap between issuing a mute and it taking effect. The rest are
+the readings the median is taken over, so the count is the session's main
+trade-off: more readings are harder for one glitch to move and give the
+per-round outlier check more to work with, at a directly proportional cost in
+time, doubled because every run is measured and then verified.
+
+Five is the default and leaves three readings per speaker. The UI takes any
+value from 3 to 40 and quotes what it buys and what it costs before you start.
+A noisy room or a speaker that wakes up slowly is the case for raising it.
 
 ### Listening positions
 

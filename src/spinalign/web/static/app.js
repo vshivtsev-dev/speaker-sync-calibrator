@@ -153,6 +153,48 @@ function onProgress(message) {
   }
 }
 
+// ----------------------------------------------------------- round length
+
+// Filled from the server so the page never invents session parameters, and so
+// a value chosen on one device shows up on the next.
+let session = { chirps_per_round: 5, guard_chirps: 2, period_seconds: 1.3 };
+
+function chosenChirps() {
+  const asked = parseInt(el('chirps').value, 10);
+  return Number.isFinite(asked) ? asked : session.chirps_per_round;
+}
+
+function describeRoundLength() {
+  const chirps = chosenChirps();
+  const readings = chirps - session.guard_chirps;
+  const ready = players.filter((p) => p.calibratable).length;
+
+  if (readings < 1) {
+    el('chirps-note').textContent =
+      `Первые ${session.guard_chirps} свиста в каждом круге отбрасываются — их заглушает`
+      + ' переключение. Нужно больше.';
+    return;
+  }
+
+  // One round per speaker, plus a repeat of the first to measure clock drift,
+  // and the whole thing runs twice: measure, then verify.
+  const rounds = ready ? ready + 1 : 0;
+  const seconds = Math.round(rounds * chirps * session.period_seconds * 2);
+  const duration = rounds ? `, замер с проверкой ≈ ${seconds} с` : '';
+  el('chirps-note').textContent =
+    `${readings} ${plural(readings, 'отсчёт', 'отсчёта', 'отсчётов')} на колонку${duration}.`
+    + ' Больше свистов — устойчивее к шуму и дольше.';
+}
+
+function plural(count, one, few, many) {
+  const mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = count % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
 // ------------------------------------------------------------------ players
 
 let players = [];
@@ -166,6 +208,13 @@ async function refreshPlayers() {
   const response = await fetch('/api/players');
   const data = await response.json();
   players = data.players;
+  session = data;
+
+  const chirps = el('chirps');
+  chirps.min = data.chirps_range[0];
+  chirps.max = data.chirps_range[1];
+  // Only while the field is not being edited, or typing would fight the poll.
+  if (document.activeElement !== chirps) chirps.value = data.chirps_per_round;
 
   const rows = players.map((p) => `
     <tr class="${p.enabled ? '' : 'off'}">
@@ -197,6 +246,7 @@ async function refreshPlayers() {
   const ready = players.filter((p) => p.calibratable);
   runnable = ready.length >= 2;
   refreshControls();
+  describeRoundLength();
 
   if (!runnable) {
     setStatus(
@@ -373,13 +423,14 @@ async function start(kind) {
     setProgress(0);
     await openMicrophone();
     if (audio.state === 'suspended') await audio.resume();
-    socket.send(JSON.stringify({ type: kind }));
+    socket.send(JSON.stringify({ type: kind, chirps_per_round: chosenChirps() }));
   } catch (error) {
     setStatus('Нет доступа к микрофону: ' + error.message, 'err');
     setBusy(false);
   }
 }
 
+el('chirps').addEventListener('input', describeRoundLength);
 el('run').addEventListener('click', () => start('calibrate'));
 el('probe').addEventListener('click', () => start('probe_sign'));
 el('save').addEventListener('click', saveProfile);
