@@ -179,11 +179,18 @@ function describeRoundLength() {
   // One round per speaker, plus a repeat of the first to measure clock drift,
   // and the whole thing runs twice: measure, then verify.
   const rounds = ready ? ready + 1 : 0;
-  const seconds = Math.round(rounds * chirps * session.period_seconds * 2);
-  const duration = rounds ? `, замер с проверкой ≈ ${seconds} с` : '';
-  el('chirps-note').textContent =
-    `${readings} ${plural(readings, 'отсчёт', 'отсчёта', 'отсчётов')} на колонку${duration}.`
-    + ' Больше свистов — устойчивее к шуму и дольше.';
+  const total = rounds * chirps;
+  const seconds = Math.round(total * session.period_seconds * 2);
+
+  let note = `${readings} ${plural(readings, 'отсчёт', 'отсчёта', 'отсчётов')} на колонку.`;
+  if (rounds) {
+    // Spelled out because the first speaker sounding twice is otherwise a
+    // surprise: at five per round it emits ten, and the count looks stuck.
+    note += ` Всего ${total} ${plural(total, 'свист', 'свиста', 'свистов')}:`
+      + ` первая колонка звучит дважды, по повтору измеряется уход часов телефона.`
+      + ` Замер с проверкой ≈ ${seconds} с.`;
+  }
+  el('chirps-note').textContent = note;
 }
 
 function plural(count, one, few, many) {

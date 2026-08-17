@@ -39,7 +39,12 @@ class PlayerInfo:
     available: bool = True
     powered: bool = True
     volume_level: int = 50
-    muted: bool = False
+    muted: bool | None = False
+    """``None`` when the server does not report it.
+
+    Kept distinct from ``False`` because the session checks that its mutes took
+    effect, and "not muted" and "will not say" call for different responses.
+    """
     sync_adjust_ms: int = 0
     sync_adjust_key: str | None = SYNC_ADJUST_KEY
     """The config key that actually carries the delay on *this* server.

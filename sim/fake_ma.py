@@ -68,6 +68,15 @@ class FakeMusicAssistant:
     round rather than an error, so it is worth being able to reproduce.
     """
 
+    ignores_mute: set[str] = field(default_factory=set)
+    """Speakers that accept a mute command and keep playing regardless.
+
+    Music Assistant has a per-player setting for how it may mute, and it can be
+    switched off entirely — after which the command succeeds and nothing
+    happens.
+    """
+
+    report_mute_state: bool = True
     report_group_state: bool = True
     """Whether this server tells anyone who is in the group.
 
@@ -78,6 +87,14 @@ class FakeMusicAssistant:
     _group: list[str] = field(default_factory=list, init=False)
     writes: list[tuple[str, int]] = field(default_factory=list, init=False)
     """Every ``sync_adjust`` write, in order — asserted on by tests."""
+
+    log: list[tuple] = field(default_factory=list, init=False)
+    """Every command in the order it arrived.
+
+    Timestamps cannot show ordering here: the virtual clock only advances when
+    someone sleeps, so two calls either side of a race read as simultaneous.
+    Sequence is the only way to pin down what has to happen before what.
+    """
 
     def __post_init__(self) -> None:
         for speaker in self.speakers:
@@ -92,7 +109,9 @@ class FakeMusicAssistant:
                 name=s.name,
                 provider=self.provider,
                 available=True,
-                muted=self._muted_now.get(s.player_id, False),
+                muted=(
+                    self._muted_now.get(s.player_id, False) if self.report_mute_state else None
+                ),
                 sync_adjust_ms=s.sync_adjust_ms,
                 # Only the leader carries the membership, which is how Music
                 # Assistant reports a sync group.
@@ -114,6 +133,10 @@ class FakeMusicAssistant:
             await self.clock.sleep(self.reload_seconds)
 
     async def set_muted(self, player_id: str, muted: bool) -> None:
+        self.log.append(("mute", player_id, muted))
+        # Accepted and ignored, which is what makes this failure so quiet.
+        if player_id in self.ignores_mute:
+            return
         if self._muted_now.get(player_id) == muted:
             return
         self._muted_now[player_id] = muted
@@ -128,6 +151,7 @@ class FakeMusicAssistant:
         ]
 
     async def play_url(self, player_id: str, url: str) -> None:
+        self.log.append(("play", player_id))
         self._playback_started = self.clock.now
         self._playing = True
 

@@ -183,12 +183,28 @@ async def measure_once(
     await backend.set_group(leader, player_ids)
     await confirm_group(backend, leader, player_ids, sleep=sleep)
 
-    # Silence everyone before the track starts so the opening round is clean.
+    # Open the first round's speaker *before* the track starts, not after.
+    #
+    # Unmuting it afterwards races the stream, and losing that race is not
+    # worth a reading — it is worth the whole measurement. The analysis has no
+    # other way to find the track's origin than to treat the first chirp it
+    # hears as chirp zero, so opening chirps lost to a late unmute slide every
+    # round onto the wrong speaker. The result still looks like a result:
+    # speakers "measure" each other's arrival times and come out suspiciously
+    # aligned.
+    # Both directions are checked, and both matter: a speaker that cannot be
+    # muted plays through every other speaker's round, and one that cannot be
+    # unmuted never sounds at all.
     for player_id in player_ids:
         await backend.set_muted(player_id, True)
+    await confirm_mute(backend, dict.fromkeys(player_ids, True), sleep=sleep)
+
+    opening = rounds[0].player_id
+    await backend.set_muted(opening, False)
+    await confirm_mute(backend, {opening: False}, sleep=sleep)
 
     await recorder.start(signal)
-    audible: str | None = None
+    audible: str | None = opening
 
     try:
         await backend.play_url(leader, _resolve_url(signal_url, signal))
@@ -240,6 +256,51 @@ async def measure_once(
 
 GROUP_CONFIRM_TIMEOUT_SECONDS = 4.0
 GROUP_POLL_SECONDS = 0.5
+MUTE_CONFIRM_TIMEOUT_SECONDS = 4.0
+
+
+async def confirm_mute(
+    backend: SpeakerBackend,
+    wanted: dict[str, bool],
+    *,
+    sleep: Sleeper = asyncio.sleep,
+    timeout: float = MUTE_CONFIRM_TIMEOUT_SECONDS,
+) -> None:
+    """Check the speakers really went quiet before playing anything.
+
+    Muting is what makes a round a solo, and Music Assistant has a per-player
+    setting for how — or whether — it can mute at all. A speaker that ignores
+    the command plays straight through everyone else's rounds, and the damage
+    is not a missing reading: every round then measures the speaker that would
+    not shut up, so the speakers come out looking perfectly aligned.
+
+    As with grouping, silence about the state is not a failure. A provider that
+    never reports its mute state cannot be checked, and refusing to measure on
+    that basis would ground a working setup.
+    """
+    deadline = timeout
+    while True:
+        players = {p.player_id: p for p in await backend.list_players()}
+        stuck = [
+            player_id
+            for player_id, muted in wanted.items()
+            if player_id in players
+            and players[player_id].muted is not None
+            and players[player_id].muted != muted
+        ]
+        if not stuck:
+            return
+        if deadline <= 0:
+            names = ", ".join(f"«{players[pid].name}»" for pid in stuck)
+            raise RuntimeError(
+                f"эти колонки не отреагировали на команду заглушить: {names}. "
+                "Замер требует, чтобы в каждом круге звучала ровно одна колонка, "
+                "иначе все круги измерят одну и ту же. Проверьте в Music Assistant "
+                "настройку mute_control у этих колонок."
+            )
+
+        await sleep(GROUP_POLL_SECONDS)
+        deadline -= GROUP_POLL_SECONDS
 
 
 async def confirm_group(

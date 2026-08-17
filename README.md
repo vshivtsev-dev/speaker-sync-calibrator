@@ -160,6 +160,13 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+A speaker also has to be able to *mute*. Muting is what makes a round a solo,
+and Music Assistant has a per-player setting for how — or whether — it may mute
+at all. A speaker that accepts the command and plays on does not cost a
+reading: every round then measures that one speaker, and the report comes back
+saying the system is perfectly aligned. Both directions are checked before the
+track starts, since a speaker that cannot be unmuted never sounds at all.
+
 A speaker also has to be able to *join the group*. The whole method rests on
 one stream reaching every speaker at once — that is what gives the rounds a
 common time base — so a speaker Music Assistant will not sync with the others

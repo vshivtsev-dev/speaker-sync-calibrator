@@ -189,7 +189,9 @@ class MusicAssistantBackend:
                     available=bool(player.available),
                     powered=bool(player.powered),
                     volume_level=int(player.volume_level or 0),
-                    muted=bool(player.volume_muted),
+                    # Not coerced to bool: an unreported state must stay
+                    # distinguishable from a reported "not muted".
+                    muted=player.volume_muted,
                     player_type=_type_name(player.type),
                     enabled=bool(getattr(player, "enabled", True)),
                     hidden=bool(getattr(player, "hide_in_ui", False)),

@@ -210,6 +210,47 @@ async def test_writing_to_a_switched_off_speaker_is_refused():
     assert server.writes == []
 
 
+async def test_the_opening_speaker_is_already_audible_when_the_track_starts():
+    """The bug that produced a confident, wrong report on live hardware.
+
+    The opening speaker used to be unmuted *after* playback started, which
+    raced the stream. The analysis has no way to find the track's origin other
+    than treating the first chirp it hears as chirp zero, so opening chirps
+    lost to a late unmute do not cost a reading — they slide every round onto
+    the wrong speaker, and a wired speaker and a Bluetooth one come out
+    "aligned" to a fraction of a millisecond.
+    """
+    server, recorder, clock = make_server(snr_db=30.0)
+
+    await measure_once(server, recorder, await server.list_players(), sleep=clock.sleep)
+
+    # Sequence, not timestamps: on a virtual clock the two calls either side of
+    # the race read as simultaneous.
+    play = server.log.index(("play", "esp32"))
+    assert ("mute", "esp32", False) in server.log[:play]
+
+
+async def test_a_speaker_that_ignores_mute_is_named():
+    """Muting is what makes a round a solo. A speaker that plays through
+    everyone else's rounds does not cost a reading either — every round then
+    measures that one speaker, and the result looks beautifully aligned."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.ignores_mute = {"esp32"}
+
+    with pytest.raises(RuntimeError, match="не отреагировали"):
+        await calibrate(server, recorder, sleep=clock.sleep)
+
+
+async def test_a_provider_that_reports_no_mute_state_is_not_second_guessed():
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.report_mute_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
 async def test_a_speaker_that_never_joins_the_group_is_named():
     """Live hardware does this: the speaker plays music perfectly well but sits
     out the test in silence, because it never joined the sync group and so
