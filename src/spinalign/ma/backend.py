@@ -57,6 +57,14 @@ class PlayerInfo:
     found: seeing what *is* there turns a mystery into a one-line fix.
     """
 
+    config_error: str | None = None
+    """Why this player's settings could not be read, if they could not.
+
+    "This speaker has no delay setting" and "this speaker's settings could not
+    be read" are different facts with different fixes, and reporting the second
+    as the first sent everyone looking in the wrong place.
+    """
+
     player_type: str = "player"
     enabled: bool = True
     hidden: bool = False
@@ -196,6 +204,8 @@ class PlayerInfo:
             return "группа, а не колонка"
         if self.hidden:
             return "скрыта в Music Assistant"
+        if self.config_error:
+            return "не удалось прочитать настройки"
         return "нет настройки задержки"
 
 

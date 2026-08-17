@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from spinalign.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
@@ -49,6 +50,49 @@ TRACK_FETCH_MARKERS = (
     "no route to host",
     "timed out",
 )
+
+
+@dataclass(frozen=True)
+class ConfigEntryView:
+    """One config entry, read straight off the wire.
+
+    Deliberately not the library's ``ConfigEntry``. That model tracks the
+    server release, and it refuses a whole response over one entry it does not
+    recognise — a config type added since, a multi-value entry it says itself
+    must be deserialised by another class. This app needs six plain JSON fields
+    and would rather have the other entries than a matching set of dataclasses.
+    """
+
+    key: str
+    type: str = ""
+    label: str = ""
+    range: tuple | None = None
+    value: object = None
+    default_value: object = None
+    hidden: bool = False
+    read_only: bool = False
+
+    @classmethod
+    def from_wire(cls, raw: object) -> "ConfigEntryView | None":
+        """Read one entry, or ``None`` when it is not one we can use.
+
+        Skipping the odd unreadable entry keeps the rest of the list, which is
+        the entire point of parsing them one at a time.
+        """
+        if not isinstance(raw, dict) or not isinstance(raw.get("key"), str):
+            return None
+
+        span = raw.get("range")
+        return cls(
+            key=raw["key"],
+            type=str(raw.get("type") or ""),
+            label=str(raw.get("label") or ""),
+            range=tuple(span) if isinstance(span, (list, tuple)) and len(span) == 2 else None,
+            value=raw.get("value"),
+            default_value=raw.get("default_value"),
+            hidden=bool(raw.get("hidden")),
+            read_only=bool(raw.get("read_only")),
+        )
 
 
 class MusicAssistantBackend:
@@ -135,7 +179,7 @@ class MusicAssistantBackend:
         """
         players = []
         for player in self._client.players.players:
-            entries = await self._config_entries(player.player_id)
+            entries, config_error = await self._config_entries(player.player_id)
             delay = find_delay_entry(entries)
             players.append(
                 PlayerInfo(
@@ -161,35 +205,54 @@ class MusicAssistantBackend:
                     sync_adjust_ms=_current_value(delay),
                     sync_adjust_key=delay.key if delay is not None else None,
                     config_keys=tuple(entry.key for entry in entries),
+                    config_error=config_error,
                 )
             )
         return players
 
-    async def _config_entries(self, player_id: str) -> list:
-        """The player's config *entries*, or an empty list if refused.
+    async def _config_entries(self, player_id: str) -> tuple[list[ConfigEntryView], str | None]:
+        """The player's config entries, and why they are missing if they are.
 
-        Groups and other oddities can fail here; that is information, not a
-        reason to abandon the whole listing.
+        The command is issued raw rather than through the library's typed
+        controller. That controller runs every entry through ``ConfigEntry``,
+        which is versioned in step with the *server* — and a single entry it
+        cannot parse raises for the whole list. On a server one release ahead
+        that is not a degraded reading, it is every speaker losing every
+        setting at once, reported as "this speaker has no delay setting".
+
+        A failure is returned rather than swallowed. "No settings" and "could
+        not read the settings" are different facts and the user needs to be
+        told which one happened.
         """
         try:
-            return list(await self._client.config.get_player_config_entries(player_id))
+            raw = await self._client.send_command(
+                "config/players/get_entries", player_id=player_id, action=None, values=None
+            )
         except Exception as error:  # noqa: BLE001 - any failure means "unknown"
-            logger.debug("no config entries for player %s: %s", player_id, error)
-            return []
+            logger.warning("could not read the settings of player %s: %s", player_id, error)
+            return [], str(error) or type(error).__name__
+
+        seen = (ConfigEntryView.from_wire(item) for item in raw or ())
+        return [entry for entry in seen if entry is not None], None
 
     async def get_sync_adjust(self, player_id: str) -> int:
-        return _current_value(find_delay_entry(await self._config_entries(player_id)))
+        entries, _ = await self._config_entries(player_id)
+        return _current_value(find_delay_entry(entries))
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
         # Looked up rather than assumed: the key differs between Music
         # Assistant versions, and writing to a name this server does not have
         # would fail loudly at best and land somewhere unrelated at worst.
-        delay = find_delay_entry(await self._config_entries(player_id))
+        entries, error = await self._config_entries(player_id)
+        delay = find_delay_entry(entries)
         if delay is None:
             raise RuntimeError(
                 f"player {player_id} has no delay setting to write; "
-                "its config keys are: "
-                + ", ".join(e.key for e in await self._config_entries(player_id))
+                + (
+                    f"its settings could not be read: {error}"
+                    if error
+                    else "its config keys are: " + ", ".join(e.key for e in entries)
+                )
             )
         await self._client.config.save_player_config(player_id, {delay.key: int(milliseconds)})
 

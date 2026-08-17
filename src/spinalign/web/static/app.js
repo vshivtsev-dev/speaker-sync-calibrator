@@ -224,6 +224,12 @@ async function refreshPlayers() {
         !p.calibratable && p.config_keys && p.config_keys.length
           ? `<br><span class="sub">настройки: ${escapeHtml(p.config_keys.join(', '))}</span>`
           : ''
+      }${
+        // A failed read is a different fault from an absent setting, and the
+        // server's own words are what identify it.
+        p.config_error
+          ? `<br><span class="sub bad">${escapeHtml(p.config_error)}</span>`
+          : ''
       }</td>
       <td class="num">${p.calibratable
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`

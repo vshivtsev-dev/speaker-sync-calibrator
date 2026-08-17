@@ -48,7 +48,13 @@ class FakePlayer:
 
 @dataclass
 class FakeEntry:
-    """Shaped like music_assistant_models' ConfigEntry."""
+    """One config entry, as it comes back over the wire.
+
+    Pinned as JSON rather than as the library's ConfigEntry on purpose: the
+    typed model refuses a whole response over one entry it does not recognise,
+    which is exactly the failure the adapter now works around, so testing
+    against it would test the wrong thing.
+    """
 
     key: str
     type: str = "integer"
@@ -58,6 +64,19 @@ class FakeEntry:
     default_value: object = None
     hidden: bool = False
     read_only: bool = False
+
+    def as_wire(self) -> dict:
+        return {
+            "key": self.key,
+            "type": self.type,
+            "label": self.label,
+            # JSON has no tuples: a range arrives as a list.
+            "range": list(self.range) if self.range else None,
+            "value": self.value,
+            "default_value": self.default_value,
+            "hidden": self.hidden,
+            "read_only": self.read_only,
+        }
 
 
 def delay_entry(key="sync_adjust", value=None, label="Audio synchronization delay correction"):
@@ -87,21 +106,35 @@ class FakeConfig:
     entries: dict = field(default_factory=dict)
     saved: list[tuple] = field(default_factory=list)
 
-    async def get_player_config_entries(self, player_id, action=None, values=None):
-        return list(self.entries.get(player_id, []))
-
     async def save_player_config(self, player_id, values):
         self.saved.append((player_id, dict(values)))
         for entry in self.entries.get(player_id, []):
-            if entry.key in values:
+            if isinstance(entry, FakeEntry) and entry.key in values:
                 entry.value = values[entry.key]
 
 
 class FakeClient:
-    def __init__(self, players, entries=None):
+    def __init__(self, players, entries=None, refuse_entries=None):
         self.players = FakePlayers(players)
         self.config = FakeConfig(entries or {})
+        self.refuse_entries = refuse_entries or {}
+        self.commands: list[tuple] = []
         self.disconnected = False
+
+    async def send_command(self, command, **kwargs):
+        self.commands.append((command, kwargs))
+        if command != "config/players/get_entries":
+            raise AssertionError(f"unexpected command {command}")
+
+        player_id = kwargs["player_id"]
+        if player_id in self.refuse_entries:
+            raise RuntimeError(self.refuse_entries[player_id])
+        # Anything that is not a FakeEntry passes through untouched, so a test
+        # can post an entry in a shape this app has never seen.
+        return [
+            entry.as_wire() if isinstance(entry, FakeEntry) else entry
+            for entry in self.config.entries.get(player_id, [])
+        ]
 
     async def disconnect(self):
         self.disconnected = True
@@ -283,6 +316,59 @@ async def test_a_player_with_no_delay_setting_reports_what_it_does_have():
     assert player.config_keys == ("volume", "crossfade")
 
 
+async def test_one_unreadable_entry_does_not_cost_the_speaker_its_settings():
+    """The regression that took every speaker out at once.
+
+    The settings used to go through the library's ConfigEntry, which refuses a
+    whole response over a single entry it does not recognise — and the server
+    is routinely a release ahead. Entries are read one at a time now, so an
+    unfamiliar one is skipped rather than taking the delay setting with it."""
+    client = FakeClient(
+        [FakePlayer("esp32", "Кухня")],
+        entries={
+            "esp32": [
+                # A shape from a newer server: no key at all, and a config type
+                # this app has never heard of.
+                {"type": "multi_value_selector", "label": "Что-то новое"},
+                delay_entry(value=80),
+            ]
+        },
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.is_calibratable
+    assert player.sync_adjust_ms == 80
+    assert player.config_error is None
+
+
+async def test_settings_that_cannot_be_read_are_not_reported_as_absent():
+    """"Has no delay setting" and "settings could not be read" are different
+    faults with different fixes, and calling the second the first is what sent
+    everyone looking in the wrong place."""
+    client = FakeClient(
+        [FakePlayer("esp32", "Кухня")],
+        refuse_entries={"esp32": "Command timed out"},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert not player.is_calibratable
+    assert player.exclusion_reason == "не удалось прочитать настройки"
+    assert player.config_error == "Command timed out"
+
+
+async def test_the_settings_request_does_not_go_through_the_typed_model(backend):
+    """Pinned because routing it through the library's controller is exactly
+    what broke: the raw command is the contract this adapter depends on."""
+    adapter, client = backend
+
+    await adapter.list_players()
+
+    assert [c[0] for c in client.commands] == ["config/players/get_entries"] * 2
+    assert client.commands[0][1]["player_id"] == "esp32"
+
+
 async def test_a_hidden_or_read_only_entry_is_not_used():
     client = FakeClient(
         [FakePlayer("odd", "Странная")],
@@ -297,18 +383,11 @@ async def test_a_hidden_or_read_only_entry_is_not_used():
 async def test_a_sync_group_is_listed_but_not_calibratable():
     """A group has no output of its own, and the server errors on its config
     entries — which is how one took down startup entirely."""
-
-    class Refusing(FakeConfig):
-        async def get_player_config_entries(self, player_id, action=None, values=None):
-            if player_id.startswith("syncgroup"):
-                raise RuntimeError("Config key not found for player")
-            return await super().get_player_config_entries(player_id)
-
     client = FakeClient(
         [FakePlayer("esp32", "Кухня"), FakePlayer("syncgroup_wgsar5sd", "Везде", type="group")],
         entries={"esp32": [delay_entry()]},
+        refuse_entries={"syncgroup_wgsar5sd": "Config key not found for player"},
     )
-    client.config = Refusing({"esp32": [delay_entry()]})
     adapter = MusicAssistantBackend(client)
 
     players = await adapter.list_players()

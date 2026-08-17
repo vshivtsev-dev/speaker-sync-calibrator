@@ -192,6 +192,9 @@ async def _players(args) -> int:
         # renamed setting from an absent one is to look at what is there.
         print()
         for player in players:
+            if player.config_error:
+                print(f"{player.name}: could not be read — {player.config_error}")
+                continue
             keys = sorted(player.config_keys)
             print(f"{player.name}: {', '.join(keys) if keys else '(no config entries returned)'}")
 

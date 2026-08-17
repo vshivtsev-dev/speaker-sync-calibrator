@@ -299,6 +299,7 @@ def create_app(state: AppState) -> web.Application:
                         # Shown when no delay setting was found, so the next
                         # round of diagnosis is a glance rather than a call.
                         "config_keys": list(p.config_keys),
+                        "config_error": p.config_error,
                     }
                     for p in found
                 ],
