@@ -401,6 +401,46 @@ async def apply_solution(
     return tuple(applied)
 
 
+INDISTINGUISHABLE_MS = 0.2
+"""Closer than two independent speakers plausibly land without help."""
+
+
+def _check_the_rounds_isolated(
+    pass_: MeasurementPass, players: Sequence[PlayerInfo]
+) -> list[str]:
+    """Notice a measurement in which every round heard the same speaker.
+
+    This is the failure that costs the most to diagnose, because it does not
+    look like a failure: if one speaker is audible throughout, every round
+    measures that speaker, every reading agrees, and the report announces a
+    system already in perfect alignment. It has been caused by an announcement
+    overriding mute, by a speaker that never joined the group, and by the
+    opening chirps being lost — three different faults with one signature.
+
+    Uncorrected speakers landing within a fraction of a millisecond of each
+    other is what gives it away. The corrections in force are what separates
+    this from a system that is genuinely aligned: there, the readings agree
+    *because* the delays differ, and here nothing is compensating anything.
+    """
+    latencies = pass_.latencies_ms
+    if len(latencies) < 2 or max(latencies.values()) - min(latencies.values()) > (
+        INDISTINGUISHABLE_MS
+    ):
+        return []
+
+    corrections = {p.sync_adjust_ms for p in players if p.player_id in latencies}
+    if len(corrections) > 1:
+        return []  # they agree because their delays differ — that is alignment
+
+    return [
+        "every speaker measured the same arrival time to within "
+        f"{INDISTINGUISHABLE_MS} ms while all of them sit at the same delay, so the "
+        "rounds did not isolate anyone: one speaker was almost certainly audible "
+        "throughout and the others silent. Check that each speaker really does "
+        "sound on its own turn."
+    ]
+
+
 async def calibrate(
     backend: SpeakerBackend,
     recorder: Recorder,
@@ -434,6 +474,7 @@ async def calibrate(
         progress=progress,
     )
     problems = list(before.analysis.problems)
+    problems.extend(_check_the_rounds_isolated(before, players))
     solution = solve(build_measurements(before, players), sign=sign)
 
     _report(progress, stage="applying", writes=len(solution.changed()))

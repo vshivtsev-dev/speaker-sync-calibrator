@@ -230,6 +230,39 @@ async def test_the_opening_speaker_is_already_audible_when_the_track_starts():
     assert ("mute", "esp32", False) in server.log[:play]
 
 
+async def test_a_measurement_where_one_speaker_was_audible_throughout_is_called_out():
+    """The signature of the failure that cost the most to find.
+
+    It does not look like a failure. If one speaker sounds through every round,
+    every round measures that speaker, all the readings agree, and the report
+    announces a system already in perfect alignment — which is exactly what
+    live hardware produced, with a wired output and a Bluetooth speaker
+    supposedly within half a millisecond of each other.
+    """
+    server, recorder, clock = make_server(snr_db=30.0)
+    # The exact live shape: the leader reports itself muted and sounds anyway,
+    # while the others never receive the stream at all.
+    server.mute_is_cosmetic = {"esp32"}
+    server.ungroupable = {"avr", "bt"}
+    server.report_group_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert any("did not isolate" in problem for problem in report.problems)
+
+
+async def test_speakers_held_together_by_their_delays_are_not_called_out():
+    """A calibrated system measures the same way for the opposite reason: the
+    readings agree *because* the delays differ. Confusing the two would flag
+    every re-run of an already aligned setup."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    await calibrate(server, recorder, sleep=clock.sleep)
+
+    again = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert not [p for p in again.problems if "did not isolate" in p]
+
+
 async def test_a_speaker_that_ignores_mute_is_named():
     """Muting is what makes a round a solo. A speaker that plays through
     everyone else's rounds does not cost a reading either — every round then

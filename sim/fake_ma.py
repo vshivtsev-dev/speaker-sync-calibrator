@@ -58,6 +58,7 @@ class FakeMusicAssistant:
 
     _mutes: list[_MuteEvent] = field(default_factory=list, init=False)
     _muted_now: dict[str, bool] = field(default_factory=dict, init=False)
+    _commanded_mute: dict[str, bool] = field(default_factory=dict, init=False)
     _playback_started: float | None = field(default=None, init=False)
     _playing: bool = field(default=False, init=False)
     ungroupable: set[str] = field(default_factory=set)
@@ -69,11 +70,17 @@ class FakeMusicAssistant:
     """
 
     ignores_mute: set[str] = field(default_factory=set)
-    """Speakers that accept a mute command and keep playing regardless.
+    """Speakers where the mute command changes nothing at all — not the
+    reported state, not the audio. Music Assistant has a per-player setting for
+    how it may mute, and it can be switched off entirely."""
 
-    Music Assistant has a per-player setting for how it may mute, and it can be
-    switched off entirely — after which the command succeeds and nothing
-    happens.
+    mute_is_cosmetic: set[str] = field(default_factory=set)
+    """Speakers that report themselves muted and keep playing anyway.
+
+    The nastier of the two, and the real one: playing the track as an
+    announcement made Music Assistant override mute to be sure the
+    announcement was heard, so the state read back correctly while the speaker
+    sounded through every round.
     """
 
     report_mute_state: bool = True
@@ -109,9 +116,7 @@ class FakeMusicAssistant:
                 name=s.name,
                 provider=self.provider,
                 available=True,
-                muted=(
-                    self._muted_now.get(s.player_id, False) if self.report_mute_state else None
-                ),
+                muted=self._reported_mute(s.player_id) if self.report_mute_state else None,
                 sync_adjust_ms=s.sync_adjust_ms,
                 # Only the leader carries the membership, which is how Music
                 # Assistant reports a sync group.
@@ -137,10 +142,20 @@ class FakeMusicAssistant:
         # Accepted and ignored, which is what makes this failure so quiet.
         if player_id in self.ignores_mute:
             return
+
+        self._commanded_mute[player_id] = muted
+        if player_id in self.mute_is_cosmetic:
+            return  # the state moves, the sound does not
         if self._muted_now.get(player_id) == muted:
             return
         self._muted_now[player_id] = muted
         self._mutes.append(_MuteEvent(self.clock.now, player_id, muted))
+
+    def _reported_mute(self, player_id: str) -> bool:
+        """What the server *says*, which is not always what the room hears."""
+        if player_id in self.mute_is_cosmetic:
+            return self._commanded_mute.get(player_id, False)
+        return self._muted_now.get(player_id, False)
 
     async def set_group(self, leader_id: str, member_ids: list[str]) -> None:
         # A refusal is silent, exactly as it is on real hardware: the command

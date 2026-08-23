@@ -160,6 +160,20 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+### How the track is played
+
+Through the group's queue, as ordinary playback — not as an announcement.
+
+An announcement looks like the obvious fit: it takes a plain URL and restores
+whatever was playing afterwards. But it is addressed to one player, and it
+deliberately overrides that player's volume and mute so that it is heard no
+matter what. Those are exactly the controls this measurement steers with. On
+live hardware the leader played through every round, the other speakers never
+made a sound, and the report came back announcing a wired output and a
+Bluetooth speaker aligned to within half a millisecond of each other.
+
+The cost is that a calibration stops what was playing and does not put it back.
+
 A speaker also has to be able to *mute*. Muting is what makes a round a solo,
 and Music Assistant has a per-player setting for how — or whether — it may mute
 at all. A speaker that accepts the command and plays on does not cost a

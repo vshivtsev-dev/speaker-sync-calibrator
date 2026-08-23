@@ -102,6 +102,17 @@ class FakePlayers:
 
 
 @dataclass
+class FakeQueues:
+    calls: list[tuple] = field(default_factory=list)
+    refuse: str | None = None
+
+    async def play_media(self, queue_id, media, option=None, **kwargs):
+        self.calls.append(("play_media", queue_id, media, option))
+        if self.refuse:
+            raise ValueError(self.refuse)
+
+
+@dataclass
 class FakeConfig:
     entries: dict = field(default_factory=dict)
     saved: list[tuple] = field(default_factory=list)
@@ -116,6 +127,7 @@ class FakeConfig:
 class FakeClient:
     def __init__(self, players, entries=None, refuse_entries=None):
         self.players = FakePlayers(players)
+        self.player_queues = FakeQueues()
         self.config = FakeConfig(entries or {})
         self.refuse_entries = refuse_entries or {}
         self.commands: list[tuple] = []
@@ -448,15 +460,22 @@ async def test_grouping_does_not_list_the_leader_as_its_own_child(backend):
     assert ("group_many", "esp32", ("bt",)) in client.players.calls
 
 
-async def test_announcement_chime_is_switched_off(backend):
-    """A chime before the track is unknown audio at an unknown time, arriving
-    right where the measurement starts."""
+async def test_the_track_is_played_through_the_queue_not_as_an_announcement(backend):
+    """The fault that made every round measure the same speaker.
+
+    An announcement is addressed to one player and deliberately overrides its
+    volume and mute so it is heard regardless — and mute is exactly what gives
+    each round its solo. Under it the leader played through every round and the
+    other speakers never sounded at all, so the report came back saying the
+    system was already in perfect alignment."""
     adapter, client = backend
 
     await adapter.play_url("esp32", "http://host/signal.wav?chirps=20")
 
-    call = next(c for c in client.players.calls if c[0] == "play_announcement")
-    assert call[3] is False
+    assert client.player_queues.calls == [
+        ("play_media", "esp32", "http://host/signal.wav?chirps=20", "replace")
+    ]
+    assert not [c for c in client.players.calls if c[0] == "play_announcement"]
 
 
 async def test_an_unreachable_track_names_the_setting_to_change(backend):
@@ -465,9 +484,7 @@ async def test_an_unreachable_track_names_the_setting_to_change(backend):
     failure, which says nothing about what to change."""
     adapter, client = backend
     url = "http://spinalign:8080/signal.wav?chirps=15"
-    client.players.play_announcement = _raising(
-        f"Unable to retrieve info for {url} (Input/output error)"
-    )
+    client.player_queues.refuse = f"Unable to retrieve info for {url} (Input/output error)"
 
     with pytest.raises(RuntimeError) as caught:
         await adapter.play_url("esp32", url)
@@ -489,7 +506,7 @@ async def test_an_unreachable_track_names_the_setting_to_change(backend):
 )
 async def test_the_other_ways_a_fetch_fails_are_recognised_too(backend, reported):
     adapter, client = backend
-    client.players.play_announcement = _raising(reported)
+    client.player_queues.refuse = reported
 
     with pytest.raises(RuntimeError, match="SPINALIGN_AUDIO_BASE_URL"):
         await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
@@ -499,17 +516,10 @@ async def test_an_unrelated_playback_failure_is_left_alone(backend):
     """Blaming the URL for every failed play would send the next person off
     reconfiguring a setting that was right all along."""
     adapter, client = backend
-    client.players.play_announcement = _raising("Player is powered off")
+    client.player_queues.refuse = "Player is powered off"
 
     with pytest.raises(ValueError, match="powered off"):
         await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
-
-
-def _raising(message: str):
-    async def refuse(*args, **kwargs):
-        raise ValueError(message)
-
-    return refuse
 
 
 async def test_stop_is_forwarded(backend):

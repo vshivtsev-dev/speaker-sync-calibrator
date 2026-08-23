@@ -11,9 +11,14 @@ Two things about the library are easy to get wrong and worth stating:
   inside ``start_listening``. Calling ``connect`` alone leaves that loop
   unstarted, and then *every* command hangs forever rather than failing. The
   listener is therefore started as a task and its readiness awaited.
-* ``play_announcement`` will play a chime before the audio unless told not to.
-  A chime ahead of the calibration track is unknown audio arriving at an
-  unknown time, so it is switched off explicitly.
+* The test track is played through the queue and **not** as an announcement.
+  An announcement looks like the obvious fit — it takes a plain URL and puts
+  back whatever was playing afterwards — but it is addressed to one player and
+  it deliberately overrides that player's volume and mute so that it is heard
+  regardless. Those are precisely the controls this measurement steers with:
+  under an announcement the leader played through every round and the other
+  speakers never made a sound, so every round measured the leader and the
+  speakers came out perfectly aligned.
 """
 
 from __future__ import annotations
@@ -267,12 +272,13 @@ class MusicAssistantBackend:
         )
 
     async def play_url(self, player_id: str, url: str) -> None:
-        # An announcement is the right primitive: it takes a plain URL, plays
-        # it on one player or group, and restores whatever was playing
-        # afterwards. pre_announce must be off — a chime ahead of the track
-        # would be unknown audio at an unknown time.
+        # Ordinary queue playback, which is what carries the stream to the
+        # whole sync group and leaves mute and volume meaning what they say.
+        # An announcement does neither — see this module's docstring. The queue
+        # id is the leader's player id, and "replace" starts it now rather than
+        # queueing it behind whatever is loaded.
         try:
-            await self._client.players.play_announcement(player_id, url, pre_announce=False)
+            await self._client.player_queues.play_media(player_id, url, option="replace")
         except Exception as error:
             # This is the one command where Music Assistant has to reach *back*
             # to us, so it is the one that exposes a wrong audio base URL — and
