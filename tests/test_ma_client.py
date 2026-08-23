@@ -4,10 +4,10 @@ These run against a stand-in shaped like ``music-assistant-client``'s own
 controllers, so they pin the calls the adapter makes without needing the
 optional dependency installed.
 
-The connection test is the important one. ``send_command`` waits on a future
-that only the read loop inside ``start_listening`` ever resolves, so an adapter
-that merely connects would hang on its first call instead of failing — the
-worst kind of bug to meet halfway through a calibration.
+Two of Music Assistant's shapes have caught this adapter out on live hardware
+and are pinned here: a player's *settings* are described by config entries
+rather than by whatever values happen to be stored, and an output protocol is
+a small object rather than a string.
 """
 
 from __future__ import annotations
@@ -23,14 +23,64 @@ from spinalign.ma.client import MusicAssistantBackend
 
 
 @dataclass
+class FakeProtocol:
+    """Shaped like music_assistant_models' OutputProtocol — an object, not an
+    enum, which is what made a generic str() print its whole repr."""
+
+    protocol_domain: str
+    name: str = ""
+    available: bool = True
+
+
+@dataclass
 class FakePlayer:
     player_id: str
     name: str
-    provider: str = "sendspin"
+    provider: str = "universal_player"
     available: bool = True
     powered: bool = True
     volume_level: int = 40
     volume_muted: bool = False
+    type: str = "player"
+    output_protocols: tuple = ()
+    active_output_protocol: object = None
+
+
+@dataclass
+class FakeEntry:
+    """One config entry, as it comes back over the wire.
+
+    Pinned as JSON rather than as the library's ConfigEntry on purpose: the
+    typed model refuses a whole response over one entry it does not recognise,
+    which is exactly the failure the adapter now works around, so testing
+    against it would test the wrong thing.
+    """
+
+    key: str
+    type: str = "integer"
+    label: str = ""
+    range: tuple | None = None
+    value: object = None
+    default_value: object = None
+    hidden: bool = False
+    read_only: bool = False
+
+    def as_wire(self) -> dict:
+        return {
+            "key": self.key,
+            "type": self.type,
+            "label": self.label,
+            # JSON has no tuples: a range arrives as a list.
+            "range": list(self.range) if self.range else None,
+            "value": self.value,
+            "default_value": self.default_value,
+            "hidden": self.hidden,
+            "read_only": self.read_only,
+        }
+
+
+def delay_entry(key="sync_adjust", value=None, label="Audio synchronization delay correction"):
+    return FakeEntry(key=key, type="integer", label=label, range=(-500, 500), value=value)
 
 
 @dataclass
@@ -52,23 +102,51 @@ class FakePlayers:
 
 
 @dataclass
-class FakeConfig:
-    values: dict = field(default_factory=dict)
-    saved: list[tuple] = field(default_factory=list)
+class FakeQueues:
+    calls: list[tuple] = field(default_factory=list)
+    refuse: str | None = None
 
-    async def get_player_config_value(self, player_id, key):
-        return self.values.get((player_id, key))
+    async def play_media(self, queue_id, media, option=None, **kwargs):
+        self.calls.append(("play_media", queue_id, media, option))
+        if self.refuse:
+            raise ValueError(self.refuse)
+
+
+@dataclass
+class FakeConfig:
+    entries: dict = field(default_factory=dict)
+    saved: list[tuple] = field(default_factory=list)
 
     async def save_player_config(self, player_id, values):
         self.saved.append((player_id, dict(values)))
-        self.values.update({(player_id, k): v for k, v in values.items()})
+        for entry in self.entries.get(player_id, []):
+            if isinstance(entry, FakeEntry) and entry.key in values:
+                entry.value = values[entry.key]
 
 
 class FakeClient:
-    def __init__(self, players, values=None):
+    def __init__(self, players, entries=None, refuse_entries=None):
         self.players = FakePlayers(players)
-        self.config = FakeConfig(values or {})
+        self.player_queues = FakeQueues()
+        self.config = FakeConfig(entries or {})
+        self.refuse_entries = refuse_entries or {}
+        self.commands: list[tuple] = []
         self.disconnected = False
+
+    async def send_command(self, command, **kwargs):
+        self.commands.append((command, kwargs))
+        if command != "config/players/get_entries":
+            raise AssertionError(f"unexpected command {command}")
+
+        player_id = kwargs["player_id"]
+        if player_id in self.refuse_entries:
+            raise RuntimeError(self.refuse_entries[player_id])
+        # Anything that is not a FakeEntry passes through untouched, so a test
+        # can post an entry in a shape this app has never seen.
+        return [
+            entry.as_wire() if isinstance(entry, FakeEntry) else entry
+            for entry in self.config.entries.get(player_id, [])
+        ]
 
     async def disconnect(self):
         self.disconnected = True
@@ -77,8 +155,15 @@ class FakeClient:
 @pytest.fixture
 def backend():
     client = FakeClient(
-        [FakePlayer("esp32", "Кухня"), FakePlayer("bt", "Спальня", volume_muted=True)],
-        values={("esp32", "sync_adjust"): 120},
+        [
+            FakePlayer("esp32", "Кухня", active_output_protocol=FakeProtocol("sendspin")),
+            FakePlayer("bt", "Спальня", volume_muted=True),
+        ],
+        entries={
+            "esp32": [delay_entry(value=120), FakeEntry("volume", value=30)],
+            # No value ever stored: the case that wrongly ruled speakers out.
+            "bt": [delay_entry()],
+        },
     )
     return MusicAssistantBackend(client), client
 
@@ -92,15 +177,250 @@ async def test_players_are_mapped_from_the_library_model(backend):
     assert players[0].name == "Кухня"
     assert players[0].sync_adjust_ms == 120
     assert players[1].muted is True
-    assert all(p.is_sendspin for p in players)
 
 
-async def test_unset_sync_adjust_reads_as_zero(backend):
-    """An entry left at its default comes back as None; that is the documented
-    default, not a reason to fail the session."""
+# ------------------------------------------------------------ output protocol
+
+
+async def test_the_transport_is_read_from_the_protocol_object():
+    """OutputProtocol is a dataclass, so the generic ".value or str()" put its
+    entire repr in the UI and made every Sendspin comparison fail."""
+    client = FakeClient(
+        [
+            FakePlayer(
+                "esp32",
+                "Кухня",
+                provider="universal_player",
+                output_protocols=(FakeProtocol("sendspin", name="Sendspin"),),
+                active_output_protocol=FakeProtocol("sendspin", name="Sendspin"),
+            )
+        ],
+        entries={"esp32": [delay_entry()]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.transport == "sendspin"
+    assert player.is_sendspin
+    assert "OutputProtocol(" not in player.transport
+
+
+async def test_the_active_protocol_wins_over_what_is_merely_available():
+    """A player offering both must be described by the one actually carrying
+    the audio, or the accuracy on offer is overstated."""
+    client = FakeClient(
+        [
+            FakePlayer(
+                "ma",
+                "Music Assistant",
+                output_protocols=(FakeProtocol("airplay"), FakeProtocol("sendspin")),
+                active_output_protocol=FakeProtocol("airplay"),
+            )
+        ],
+        entries={"ma": [delay_entry()]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.transport == "airplay"
+    assert not player.is_sendspin
+
+
+# ---------------------------------------------------------- the delay setting
+
+
+async def test_a_setting_left_at_its_default_still_counts_as_present(backend):
+    """The bug that ruled out real speakers.
+
+    A stored *value* only exists once somebody has changed it. Presence is a
+    property of the config entry, so 'bt' — which has the entry and no value —
+    must be calibratable.
+    """
     adapter, _ = backend
 
-    assert await adapter.get_sync_adjust("bt") == 0
+    players = {p.player_id: p for p in await adapter.list_players()}
+
+    assert players["bt"].supports_sync_adjust
+    assert players["bt"].sync_adjust_ms == 0
+    assert players["bt"].is_calibratable
+
+
+async def test_a_renamed_setting_is_found_by_its_shape():
+    """Music Assistant renames settings between releases, and this client will
+    routinely be older than the server. An integer spanning a few hundred
+    milliseconds with 'delay' in its label is the setting, whatever it is
+    called."""
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")],
+        entries={
+            "odd": [
+                FakeEntry("volume", value=30),
+                FakeEntry(
+                    "output_delay_correction",
+                    type="integer",
+                    label="Audio delay correction",
+                    range=(-500, 500),
+                    value=25,
+                ),
+            ]
+        },
+    )
+    adapter = MusicAssistantBackend(client)
+
+    (player,) = await adapter.list_players()
+
+    assert player.sync_adjust_key == "output_delay_correction"
+    assert player.sync_adjust_ms == 25
+    assert player.is_calibratable
+
+
+async def test_a_renamed_setting_is_also_written_under_its_real_name():
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")],
+        entries={
+            "odd": [
+                FakeEntry(
+                    "output_delay_correction",
+                    type="integer",
+                    label="Audio delay correction",
+                    range=(-500, 500),
+                )
+            ]
+        },
+    )
+    adapter = MusicAssistantBackend(client)
+
+    await adapter.set_sync_adjust("odd", -75)
+
+    assert client.config.saved == [("odd", {"output_delay_correction": -75})]
+
+
+async def test_unrelated_integer_settings_are_not_mistaken_for_the_delay():
+    """Shape matching has to be narrow enough not to grab the volume."""
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")],
+        entries={
+            "odd": [
+                FakeEntry("volume", type="integer", label="Volume", range=(0, 100)),
+                FakeEntry("crossfade_duration", type="integer", label="Crossfade", range=(0, 10)),
+            ]
+        },
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert not player.supports_sync_adjust
+    assert player.sync_adjust_key is None
+
+
+async def test_a_player_with_no_delay_setting_reports_what_it_does_have():
+    """When the guess fails, the keys the server did report are what turns the
+    next round of diagnosis into a one-line fix."""
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")],
+        entries={"odd": [FakeEntry("volume"), FakeEntry("crossfade")]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert not player.is_calibratable
+    assert player.exclusion_reason == "нет настройки задержки"
+    assert player.config_keys == ("volume", "crossfade")
+
+
+async def test_one_unreadable_entry_does_not_cost_the_speaker_its_settings():
+    """The regression that took every speaker out at once.
+
+    The settings used to go through the library's ConfigEntry, which refuses a
+    whole response over a single entry it does not recognise — and the server
+    is routinely a release ahead. Entries are read one at a time now, so an
+    unfamiliar one is skipped rather than taking the delay setting with it."""
+    client = FakeClient(
+        [FakePlayer("esp32", "Кухня")],
+        entries={
+            "esp32": [
+                # A shape from a newer server: no key at all, and a config type
+                # this app has never heard of.
+                {"type": "multi_value_selector", "label": "Что-то новое"},
+                delay_entry(value=80),
+            ]
+        },
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.is_calibratable
+    assert player.sync_adjust_ms == 80
+    assert player.config_error is None
+
+
+async def test_settings_that_cannot_be_read_are_not_reported_as_absent():
+    """"Has no delay setting" and "settings could not be read" are different
+    faults with different fixes, and calling the second the first is what sent
+    everyone looking in the wrong place."""
+    client = FakeClient(
+        [FakePlayer("esp32", "Кухня")],
+        refuse_entries={"esp32": "Command timed out"},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert not player.is_calibratable
+    assert player.exclusion_reason == "не удалось прочитать настройки"
+    assert player.config_error == "Command timed out"
+
+
+async def test_the_settings_request_does_not_go_through_the_typed_model(backend):
+    """Pinned because routing it through the library's controller is exactly
+    what broke: the raw command is the contract this adapter depends on."""
+    adapter, client = backend
+
+    await adapter.list_players()
+
+    assert [c[0] for c in client.commands] == ["config/players/get_entries"] * 2
+    assert client.commands[0][1]["player_id"] == "esp32"
+
+
+async def test_a_hidden_or_read_only_entry_is_not_used():
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")],
+        entries={"odd": [FakeEntry("sync_adjust", range=(-500, 500), read_only=True)]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert not player.supports_sync_adjust
+
+
+async def test_a_sync_group_is_listed_but_not_calibratable():
+    """A group has no output of its own, and the server errors on its config
+    entries — which is how one took down startup entirely."""
+    client = FakeClient(
+        [FakePlayer("esp32", "Кухня"), FakePlayer("syncgroup_wgsar5sd", "Везде", type="group")],
+        entries={"esp32": [delay_entry()]},
+        refuse_entries={"syncgroup_wgsar5sd": "Config key not found for player"},
+    )
+    adapter = MusicAssistantBackend(client)
+
+    players = await adapter.list_players()
+
+    group = next(p for p in players if p.player_id == "syncgroup_wgsar5sd")
+    assert not group.renders_audio
+    assert not group.is_calibratable
+    assert group.exclusion_reason == "группа, а не колонка"
+    assert next(p for p in players if p.player_id == "esp32").is_calibratable
+
+
+async def test_a_stereo_pair_is_a_real_speaker():
+    client = FakeClient(
+        [FakePlayer("pair", "Стереопара", type="stereo_pair")],
+        entries={"pair": [delay_entry(value=40)]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.is_calibratable
+    assert player.sync_adjust_ms == 40
 
 
 async def test_sync_adjust_is_written_under_the_documented_key(backend):
@@ -109,6 +429,19 @@ async def test_sync_adjust_is_written_under_the_documented_key(backend):
     await adapter.set_sync_adjust("bt", -75)
 
     assert client.config.saved == [("bt", {"sync_adjust": -75})]
+
+
+async def test_writing_to_a_player_without_the_setting_says_what_it_has():
+    client = FakeClient(
+        [FakePlayer("odd", "Странная")], entries={"odd": [FakeEntry("volume")]}
+    )
+    adapter = MusicAssistantBackend(client)
+
+    with pytest.raises(RuntimeError, match="volume"):
+        await adapter.set_sync_adjust("odd", 10)
+
+
+# --------------------------------------------------------------- the commands
 
 
 async def test_mute_goes_through_the_volume_mute_command(backend):
@@ -127,15 +460,66 @@ async def test_grouping_does_not_list_the_leader_as_its_own_child(backend):
     assert ("group_many", "esp32", ("bt",)) in client.players.calls
 
 
-async def test_announcement_chime_is_switched_off(backend):
-    """A chime before the track is unknown audio at an unknown time, arriving
-    right where the measurement starts."""
+async def test_the_track_is_played_through_the_queue_not_as_an_announcement(backend):
+    """The fault that made every round measure the same speaker.
+
+    An announcement is addressed to one player and deliberately overrides its
+    volume and mute so it is heard regardless — and mute is exactly what gives
+    each round its solo. Under it the leader played through every round and the
+    other speakers never sounded at all, so the report came back saying the
+    system was already in perfect alignment."""
     adapter, client = backend
 
     await adapter.play_url("esp32", "http://host/signal.wav?chirps=20")
 
-    call = next(c for c in client.players.calls if c[0] == "play_announcement")
-    assert call[3] is False
+    assert client.player_queues.calls == [
+        ("play_media", "esp32", "http://host/signal.wav?chirps=20", "replace")
+    ]
+    assert not [c for c in client.players.calls if c[0] == "play_announcement"]
+
+
+async def test_an_unreachable_track_names_the_setting_to_change(backend):
+    """The one command where Music Assistant connects back to us, so the one
+    that exposes a wrong audio base URL — and it reports it as an ffmpeg probe
+    failure, which says nothing about what to change."""
+    adapter, client = backend
+    url = "http://spinalign:8080/signal.wav?chirps=15"
+    client.player_queues.refuse = f"Unable to retrieve info for {url} (Input/output error)"
+
+    with pytest.raises(RuntimeError) as caught:
+        await adapter.play_url("esp32", url)
+
+    message = str(caught.value)
+    assert "SPINALIGN_AUDIO_BASE_URL" in message
+    assert url in message
+    # The original wording survives, so the diagnosis is not thrown away.
+    assert "Input/output error" in message
+
+
+@pytest.mark.parametrize(
+    "reported",
+    [
+        "Cannot connect to host spinalign:8080",
+        "Temporary failure in name resolution",
+        "Connection refused",
+    ],
+)
+async def test_the_other_ways_a_fetch_fails_are_recognised_too(backend, reported):
+    adapter, client = backend
+    client.player_queues.refuse = reported
+
+    with pytest.raises(RuntimeError, match="SPINALIGN_AUDIO_BASE_URL"):
+        await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
+
+
+async def test_an_unrelated_playback_failure_is_left_alone(backend):
+    """Blaming the URL for every failed play would send the next person off
+    reconfiguring a setting that was right all along."""
+    adapter, client = backend
+    client.player_queues.refuse = "Player is powered off"
+
+    with pytest.raises(ValueError, match="powered off"):
+        await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
 
 
 async def test_stop_is_forwarded(backend):
@@ -158,7 +542,7 @@ def _install_fake_library(monkeypatch, *, ready: bool):
             self.server_url = server_url
             self.token = token
             self.players = FakePlayers([FakePlayer("esp32", "Кухня")])
-            self.config = FakeConfig()
+            self.config = FakeConfig({"esp32": [delay_entry()]})
 
         async def start_listening(self, init_ready=None):
             started["listening"] = True

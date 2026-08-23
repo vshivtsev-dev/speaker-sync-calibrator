@@ -1,10 +1,10 @@
 """The web layer: a phone holds the microphone, this holds everything else.
 
-Plain HTTP on a single port. TLS is a reverse proxy's job — the app is meant
-to sit behind Traefik, which terminates with a real certificate. That matters
-more than it sounds: browsers only grant ``getUserMedia`` in a secure context,
-so a phone needs a trusted ``https://`` origin, and a properly issued one from
-the proxy beats a self-signed certificate the user has to click past.
+Plain HTTP on a single port. TLS is a reverse proxy's job. That matters more
+than it sounds: browsers only grant ``getUserMedia`` in a secure context, so a
+phone needs a trusted ``https://`` origin, and a properly issued certificate
+from whatever sits in front beats a self-signed one the user has to click
+past.
 
 Two routes stay deliberately unauthenticated, and both have a reason:
 
@@ -22,7 +22,7 @@ import contextlib
 import json
 import logging
 import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -37,7 +37,7 @@ from spinalign.calibration.session import (
 )
 from spinalign.calibration.validate import determine_sign
 from spinalign.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
-from spinalign.ma.backend import SpeakerBackend
+from spinalign.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -48,6 +48,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 RECORDING_TIMEOUT_FLOOR_SECONDS = 30.0
 RECORDING_TIMEOUT_SHARE = 0.5
 """Tail allowance as a fraction of the recording's own length."""
+
+# How many chirps each speaker gets. The floor is the settling guard plus one,
+# so at least one reading survives; the ceiling only keeps a slip of the finger
+# from starting a twenty-minute session.
+MIN_CHIRPS_PER_ROUND = 3
+MAX_CHIRPS_PER_ROUND = 40
 
 TOKEN_COOKIE = "spinalign_token"
 TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
@@ -84,6 +90,14 @@ class AppState:
     pretending to save.
     """
 
+    disabled_players: set[str] = field(default_factory=set)
+    """Speakers switched off by hand, by player id.
+
+    Held here as well as in the store so the switches work even when no state
+    directory is configured — they are then simply forgotten on restart, the
+    same deal the probed sign gets.
+    """
+
     sign: int = 1
     sign_checked: bool = False
     busy: bool = False
@@ -94,11 +108,41 @@ class AppState:
     def signal_url(self, signal: TestSignal) -> str:
         return f"{self.audio_base_url}/signal.wav?chirps={signal.chirp_count}"
 
+    @property
+    def speakers(self) -> SpeakerBackend:
+        """The backend with the manual switches applied.
+
+        A snapshot per call, deliberately: a job then works from one consistent
+        set of speakers for its whole run, so flipping a switch cannot change
+        what is being measured half way through.
+        """
+        return SelectedSpeakers(self.backend, frozenset(self.disabled_players))
+
     def adopt_store(self, store: ProfileStore) -> None:
-        """Attach a store and take its remembered sign as the starting point."""
+        """Attach a store and take what it remembers as the starting point."""
         self.store = store
         self.sign = store.sign
         self.sign_checked = store.sign_checked
+        self.disabled_players = set(store.disabled_players)
+        if store.chirps_per_round:
+            self.session_config = replace(
+                self.session_config, chirps_per_round=store.chirps_per_round
+            )
+
+    def set_chirps_per_round(self, chirps: int) -> None:
+        """Take the requested round length, clamped to what is measurable."""
+        chirps = max(MIN_CHIRPS_PER_ROUND, min(MAX_CHIRPS_PER_ROUND, int(chirps)))
+        self.session_config = replace(self.session_config, chirps_per_round=chirps)
+        if self.store is not None:
+            self.store.remember_chirps_per_round(chirps)
+
+    def set_player_enabled(self, player_id: str, enabled: bool) -> None:
+        if enabled:
+            self.disabled_players.discard(player_id)
+        else:
+            self.disabled_players.add(player_id)
+        if self.store is not None:
+            self.store.set_player_enabled(player_id, enabled)
 
     def remember_sign(self, sign: int, checked: bool) -> None:
         self.sign = sign
@@ -232,7 +276,7 @@ def create_app(state: AppState) -> web.Application:
         return web.json_response({"status": "ok"})
 
     async def players(_: web.Request) -> web.Response:
-        found = await state.backend.list_players()
+        found = await state.speakers.list_players()
         return web.json_response(
             {
                 "players": [
@@ -240,16 +284,62 @@ def create_app(state: AppState) -> web.Application:
                         "player_id": p.player_id,
                         "name": p.name,
                         "provider": p.provider,
+                        "transport": p.transport,
+                        "is_sendspin": p.is_sendspin,
                         "available": p.available,
                         "sync_adjust_ms": p.sync_adjust_ms,
+                        # The manual switch, reported separately from the
+                        # verdict: the UI has to draw the switch in the
+                        # position the user left it, not in the position the
+                        # rest of the checks would imply.
+                        "enabled": p.user_enabled,
                         "calibratable": p.is_calibratable,
+                        "excluded_because": p.exclusion_reason,
+                        "sync_adjust_key": p.sync_adjust_key,
+                        # Shown when no delay setting was found, so the next
+                        # round of diagnosis is a glance rather than a call.
+                        "config_keys": list(p.config_keys),
+                        "config_error": p.config_error,
                     }
                     for p in found
                 ],
                 "sign": state.sign,
                 "sign_checked": state.sign_checked,
+                "chirps_per_round": state.session_config.chirps_per_round,
+                "chirps_range": [MIN_CHIRPS_PER_ROUND, MAX_CHIRPS_PER_ROUND],
+                # So the UI can quote a duration without duplicating the
+                # session's own arithmetic.
+                "guard_chirps": state.session_config.guard_chirps,
+                "period_seconds": state.session_config.period_seconds,
             }
         )
+
+    async def player_enabled(request: web.Request) -> web.Response:
+        """Flip one speaker's manual switch."""
+        if state.busy:
+            raise web.HTTPConflict(
+                text="Идёт измерение — состав колонок сейчас менять нельзя.",
+                content_type="text/plain",
+            )
+
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            raise web.HTTPBadRequest(text="Expected JSON.", content_type="text/plain") from None
+        if not isinstance(payload.get("enabled"), bool):
+            raise web.HTTPBadRequest(
+                text="enabled must be true or false.", content_type="text/plain"
+            )
+
+        player_id = request.match_info["player_id"]
+        # Checked against the server's own list, so a stale page cannot leave a
+        # switch set for a player that no longer exists.
+        known = {p.player_id for p in await state.backend.list_players()}
+        if player_id not in known:
+            raise web.HTTPNotFound(text="No such player.", content_type="text/plain")
+
+        state.set_player_enabled(player_id, payload["enabled"])
+        return web.json_response({"player_id": player_id, "enabled": payload["enabled"]})
 
     async def signal_wav(request: web.Request) -> web.Response:
         try:
@@ -314,7 +404,7 @@ def create_app(state: AppState) -> web.Application:
 
         state.busy = True
         try:
-            outcome = await apply_profile(state.backend, profile)
+            outcome = await apply_profile(state.speakers, profile)
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error), content_type="text/plain") from error
         finally:
@@ -336,6 +426,7 @@ def create_app(state: AppState) -> web.Application:
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/api/players", players)
+    app.router.add_post("/api/players/{player_id}/enabled", player_enabled)
     app.router.add_get("/api/profiles", profiles_list)
     app.router.add_post("/api/profiles", profiles_save)
     app.router.add_post("/api/profiles/{name}/apply", profiles_apply)
@@ -393,6 +484,8 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 if running is not None and not running.done():
                     outbox.put_nowait({"type": "error", "message": "уже идёт измерение"})
                 else:
+                    if isinstance(payload.get("chirps_per_round"), int):
+                        state.set_chirps_per_round(payload["chirps_per_round"])
                     running = asyncio.create_task(_run_job(kind, state, recorder, outbox))
     finally:
         pump_task.cancel()
@@ -416,10 +509,12 @@ async def _run_job(
 
     state.busy = True
     progress = outbox.put_nowait
+    # One view of the speakers for the whole job, switches already applied.
+    speakers = state.speakers
     try:
         if kind == "probe_sign":
             check = await determine_sign(
-                state.backend,
+                speakers,
                 recorder,
                 config=state.session_config,
                 signal_url=state.signal_url,
@@ -437,7 +532,7 @@ async def _run_job(
             return
 
         report = await calibrate(
-            state.backend,
+            speakers,
             recorder,
             config=state.session_config,
             signal_url=state.signal_url,
@@ -445,6 +540,10 @@ async def _run_job(
             progress=lambda event: progress({"type": "progress", **event}),
         )
         state.last_report = report
+        # A run that saw which way the corrections moved has established the
+        # convention as firmly as the dedicated probe would have, and for free.
+        if report.observed_sign is not None:
+            state.remember_sign(report.observed_sign, checked=True)
         outbox.put_nowait({"type": "report", **describe(report)})
     except Exception as error:  # surfaced to the user rather than swallowed
         logger.exception("calibration failed")

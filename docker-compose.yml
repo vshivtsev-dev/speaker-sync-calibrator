@@ -1,12 +1,18 @@
-# Example deployment behind Traefik. Dokploy can also set the router labels
-# itself from its UI, in which case keep the environment block and drop the
-# labels — the only thing that must match either way is the service port 8080.
+# A plain container definition. Routing and TLS are left to whatever proxy you
+# put in front of it — the app speaks HTTP on 8080 and reads X-Forwarded-Proto
+# to decide whether its session cookie should be marked Secure.
+#
+# TLS in front is not optional in practice: browsers only grant microphone
+# access in a secure context, so the phone needs a trusted https:// origin.
 
 services:
   spinalign:
     build: .
     image: spinalign:latest
     restart: unless-stopped
+
+    ports:
+      - "8080:8080"
 
     environment:
       # Music Assistant, as reachable from this container.
@@ -15,13 +21,13 @@ services:
 
       # The reverse of the line above: how MUSIC ASSISTANT reaches *us* to
       # fetch the test track. This is not the address the browser uses. If MA
-      # shares this Docker network, the service name works; if it runs on the
-      # host or another machine, use the host's LAN address. It is required on
-      # purpose — a guess here fails halfway through a calibration, with every
-      # speaker muted, rather than at startup.
+      # shares a Docker network with this service, the service name works; if
+      # it runs on the host or another machine, use the host's LAN address. It
+      # is required on purpose — a guess here fails halfway through a
+      # calibration, with every speaker muted, rather than at startup.
       SPINALIGN_AUDIO_BASE_URL: ${SPINALIGN_AUDIO_BASE_URL:?set the address Music Assistant can reach this app on}
 
-      # Without this the public URL lets anyone enumerate the speakers and
+      # Without this, anyone who reaches the app can enumerate the speakers and
       # start a calibration — loud test tones and rewritten sync_adjust.
       SPINALIGN_ACCESS_TOKEN: ${SPINALIGN_ACCESS_TOKEN:?generate one, e.g. openssl rand -hex 24}
 
@@ -31,19 +37,5 @@ services:
       # costs two full measurement passes.
       - spinalign-state:/data
 
-    networks:
-      - dokploy-network
-
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.spinalign.rule=Host(`${SPINALIGN_HOSTNAME:?set the public hostname}`)
-      - traefik.http.routers.spinalign.entrypoints=websecure
-      - traefik.http.routers.spinalign.tls.certresolver=letsencrypt
-      - traefik.http.services.spinalign.loadbalancer.server.port=8080
-
 volumes:
   spinalign-state:
-
-networks:
-  dokploy-network:
-    external: true

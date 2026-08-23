@@ -139,6 +139,107 @@ announcement command and a token there would land in MA's logs and queue. That
 route is a pure function of its query parameters, with no side effects and
 nothing about the system in its response.
 
+### Which players take part
+
+A player joins a calibration when it makes a sound and has a `sync_adjust`
+setting to write. That is all the measurement needs, so the provider is not a
+requirement: whatever synchronisation error a protocol introduces is part of
+what gets measured and corrected, as long as it is stable — and an unstable
+one shows up in the per-round outlier check rather than silently.
+
+Sendspin gives the tightest guarantee and the UI says so when the group is
+mixed, but *requiring* it turned out to exclude everything on real systems
+where the same speakers are exposed through another provider.
+
+Sync groups and other aggregates are excluded, along with disabled and hidden
+players. When a speaker is unexpectedly sitting out, ask:
+
+```bash
+spinalign players --ma-url http://192.168.1.10:8095
+```
+
+which prints each player's provider, type, `sync_adjust` and the verdict.
+
+### What the delay setting will accept
+
+Its range comes from the server, not from an assumption. Music Assistant's own
+`sync_adjust` is a symmetric ±500 ms, but a Sendspin player carries
+`static_delay_ms`, which runs 0–5000: it is a latency compensation, so a
+positive value makes the player run *early*, and a negative one is refused
+outright rather than clamped.
+
+That changes where the alignment can aim. Nothing can be delayed on such a
+setting, so the target is the *fastest* speaker and everyone else is pulled
+forward to meet it. The solver takes each speaker's own accepted range, works
+out which arrival times are within everybody's reach, and picks from that —
+which also means a group mixing both kinds of setting still lands together.
+
+### Which way `sync_adjust` runs
+
+Music Assistant documents `sync_adjust` as a millisecond correction but not
+which direction is which, and servers differ. Getting it backwards is the worst
+outcome available: every correction doubles the error rather than removing it,
+and the run still writes its numbers into Music Assistant. On live hardware
+229 ms of spread became 460.
+
+The verification pass settles it without being asked. Corrections of known size
+went in and the arrival times moved, so comparing two speakers — which cancels
+each pass's arbitrary origin — says which way the setting runs. When it
+contradicts what the run assumed, the corrections are re-applied the other way
+round and verified again, and the convention is remembered for next time.
+
+The separate probe under the Calibrate button does the same thing deliberately,
+at the cost of two measurement passes, and is worth running once if you would
+rather establish it before anything is written.
+
+### How the track is played
+
+Through the group's queue, as ordinary playback — not as an announcement.
+
+An announcement looks like the obvious fit: it takes a plain URL and restores
+whatever was playing afterwards. But it is addressed to one player, and it
+deliberately overrides that player's volume and mute so that it is heard no
+matter what. Those are exactly the controls this measurement steers with. On
+live hardware the leader played through every round, the other speakers never
+made a sound, and the report came back announcing a wired output and a
+Bluetooth speaker aligned to within half a millisecond of each other.
+
+The cost is that a calibration stops what was playing and does not put it back.
+
+A speaker also has to be able to *mute*. Muting is what makes a round a solo,
+and Music Assistant has a per-player setting for how — or whether — it may mute
+at all. A speaker that accepts the command and plays on does not cost a
+reading: every round then measures that one speaker, and the report comes back
+saying the system is perfectly aligned. Both directions are checked before the
+track starts, since a speaker that cannot be unmuted never sounds at all.
+
+A speaker also has to be able to *join the group*. The whole method rests on
+one stream reaching every speaker at once — that is what gives the rounds a
+common time base — so a speaker Music Assistant will not sync with the others
+receives nothing and records as silence. That is checked before the track
+starts, and the speakers that failed to join are named, because the symptom
+otherwise looks exactly like a microphone problem in the room.
+
+Alongside those automatic checks there is a manual switch per speaker in the
+UI. Being capable is not the same as being wanted: a subwoofer, a speaker in
+another room, one whose delay you set by hand. A speaker switched off is not
+measured, not put in the playback group, and not written to — the write is
+refused at the boundary rather than left to a filter somewhere upstream to
+remember. The switches live in the state file, so they survive a restart.
+
+### Round length
+
+Each speaker gets a run of chirps, of which the first couple are discarded —
+they cover the gap between issuing a mute and it taking effect. The rest are
+the readings the median is taken over, so the count is the session's main
+trade-off: more readings are harder for one glitch to move and give the
+per-round outlier check more to work with, at a directly proportional cost in
+time, doubled because every run is measured and then verified.
+
+Five is the default and leaves three readings per speaker. The UI takes any
+value from 3 to 40 and quotes what it buys and what it costs before you start.
+A noisy room or a speaker that wakes up slowly is the case for raising it.
+
 ### Listening positions
 
 A calibration belongs to the spot the phone was standing in — the compensation
@@ -164,13 +265,17 @@ cp .env.example .env   # fill in the four variables above
 docker compose up -d --build
 ```
 
-`docker-compose.yml` carries Traefik router labels as an example; Dokploy can
-set them from its own UI instead, in which case keep the environment block and
-drop the labels. Either way the service port is `8080`.
+The compose file defines the container and nothing else — routing, TLS and
+certificates are left to whatever proxy you put in front. The service listens
+on `8080`, and reads `X-Forwarded-Proto` to decide whether to mark its session
+cookie `Secure`, so a proxy terminating TLS needs to pass that header.
+
+The `/data` volume is the part not to skip: it holds the saved positions and
+the probed sign, and without it both are gone on every restart.
 
 ## Status
 
-Complete and covered by 114 tests that need no hardware: Music Assistant sits
+Complete and covered by 121 tests that need no hardware: Music Assistant sits
 behind a narrow port, and a simulated room renders audio the detector
 genuinely has to measure.
 

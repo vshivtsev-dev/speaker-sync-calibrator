@@ -24,7 +24,15 @@ from sim.fake_ma import (
 )
 from spinalign.calibration.profiles import ProfileStore
 from spinalign.calibration.session import SessionConfig, calibrate
-from spinalign.web.app import TOKEN_COOKIE, AppState, create_app, serve
+from spinalign.ma.backend import PlayerInfo
+from spinalign.web.app import (
+    MAX_CHIRPS_PER_ROUND,
+    MIN_CHIRPS_PER_ROUND,
+    TOKEN_COOKIE,
+    AppState,
+    create_app,
+    serve,
+)
 
 TOKEN = "s3cret-token"
 
@@ -122,15 +130,38 @@ async def test_players_endpoint_reports_calibratability(state):
     assert payload["sign"] == 1
 
 
-async def test_non_sendspin_players_are_marked_uncalibratable(state):
-    state.backend.provider = "airplay"
+async def test_players_from_another_provider_are_still_offered(state):
+    """Real systems expose the same speakers through providers other than
+    Sendspin, and demanding Sendspin left nothing to calibrate at all."""
+    state.backend.provider = "universal_player"
     client = await client_for(create_app(state))
     try:
         payload = await (await client.get("/api/players")).json()
     finally:
         await client.close()
 
-    assert not any(p["calibratable"] for p in payload["players"])
+    assert all(p["calibratable"] for p in payload["players"])
+
+
+async def test_an_excluded_player_says_why(state):
+    """The list is the only place a user can find out why a speaker is sitting
+    out, so the reason travels with it."""
+    state.backend.extra_players = [
+        PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
+        PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
+        PlayerInfo("off", "Выключена", "universal_player", available=False),
+    ]
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    reasons = {p["name"]: p["excluded_because"] for p in payload["players"]}
+    assert reasons["Везде"] == "группа, а не колонка"
+    assert reasons["Без настройки"] == "нет настройки задержки"
+    assert reasons["Выключена"] == "недоступна"
+    assert reasons["Кухня (ESP32)"] is None
 
 
 async def test_ui_and_health_are_served(state):
@@ -161,6 +192,168 @@ async def test_microphone_processing_is_disabled_in_the_client(state):
     assert "echoCancellation: false" in app_js
     assert "noiseSuppression: false" in app_js
     assert "autoGainControl: false" in app_js
+
+
+# ---------------------------------------------------------- the round length
+
+
+async def test_the_round_length_is_reported_with_what_it_means(state):
+    """The UI quotes a duration and a reading count, so it needs the session's
+    own numbers rather than a second copy of them."""
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    assert payload["chirps_per_round"] == 5
+    assert payload["guard_chirps"] == 2
+    assert payload["period_seconds"] == pytest.approx(1.3)
+    assert payload["chirps_range"] == [MIN_CHIRPS_PER_ROUND, MAX_CHIRPS_PER_ROUND]
+
+
+@pytest.mark.parametrize(
+    ("asked", "expected"),
+    [(12, 12), (1, MIN_CHIRPS_PER_ROUND), (9999, MAX_CHIRPS_PER_ROUND)],
+)
+def test_the_round_length_is_clamped_to_what_is_measurable(state, asked, expected):
+    """Below the settling guard no reading survives at all, and the ceiling
+    only stops a slip of the finger starting a twenty-minute session."""
+    state.set_chirps_per_round(asked)
+
+    assert state.session_config.chirps_per_round == expected
+
+
+def test_the_round_length_survives_a_restart(tmp_path):
+    with_store(make_state(), tmp_path).set_chirps_per_round(9)
+
+    restarted = with_store(make_state(), tmp_path)
+
+    assert restarted.session_config.chirps_per_round == 9
+
+
+async def test_the_round_length_arrives_with_the_calibrate_request(state):
+    """Sent with the request rather than through a settings route: it belongs
+    to the run being started, and cannot then drift out of step with it."""
+    client = await client_for(create_app(state))
+    try:
+        socket = await client.ws_connect("/ws")
+        await socket.send_json({"type": "calibrate", "chirps_per_round": 8})
+        # The job starts and immediately asks for audio; the value is applied
+        # before the task is created.
+        await socket.receive(timeout=5)
+        await socket.close()
+    finally:
+        await client.close()
+
+    assert state.session_config.chirps_per_round == 8
+
+
+# -------------------------------------------------------- the manual switch
+
+
+async def test_switching_a_speaker_off_takes_it_out_of_the_session(state):
+    client = await client_for(create_app(state))
+    try:
+        flipped = await client.post("/api/players/avr/enabled", json={"enabled": False})
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    assert flipped.status == 200
+    by_id = {p["player_id"]: p for p in payload["players"]}
+    assert by_id["avr"]["enabled"] is False
+    assert by_id["avr"]["calibratable"] is False
+    assert by_id["avr"]["excluded_because"] == "выключена вручную"
+    # Nothing else moves.
+    assert by_id["esp32"]["calibratable"] is True
+
+
+async def test_a_switched_off_speaker_can_be_switched_back_on(state):
+    """The switch is the user's own doing, so it has to be reversible from the
+    same screen — including when switching off left too few to calibrate."""
+    client = await client_for(create_app(state))
+    try:
+        await client.post("/api/players/avr/enabled", json={"enabled": False})
+        await client.post("/api/players/bt/enabled", json={"enabled": False})
+        await client.post("/api/players/avr/enabled", json={"enabled": True})
+        payload = await (await client.get("/api/players")).json()
+    finally:
+        await client.close()
+
+    by_id = {p["player_id"]: p for p in payload["players"]}
+    assert by_id["avr"]["calibratable"] is True
+    assert by_id["bt"]["calibratable"] is False
+
+
+async def test_the_switch_is_remembered_across_a_restart(tmp_path):
+    client = await client_for(create_app(with_store(make_state(), tmp_path)))
+    try:
+        await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    restarted = with_store(make_state(), tmp_path)
+
+    assert restarted.disabled_players == {"bt"}
+
+
+async def test_the_switch_works_without_a_state_directory(state):
+    """Unlike saving a position, this must not need a disk: it only decides
+    what the run in front of the user covers."""
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 200
+    assert state.disabled_players == {"bt"}
+
+
+async def test_switching_an_unknown_player_is_a_404(state):
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/ghost/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 404
+    assert state.disabled_players == set()
+
+
+async def test_the_switch_needs_a_boolean(state):
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": "нет"})
+    finally:
+        await client.close()
+
+    assert response.status == 400
+
+
+async def test_the_switch_is_refused_mid_measurement(state):
+    """Changing the cast half way through a run would leave a report about a
+    set of speakers that no longer matches what was measured."""
+    state.busy = True
+    client = await client_for(create_app(state))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 409
+
+
+async def test_the_switch_is_behind_the_token(guarded):
+    client = await client_for(create_app(guarded))
+    try:
+        response = await client.post("/api/players/bt/enabled", json={"enabled": False})
+    finally:
+        await client.close()
+
+    assert response.status == 401
+    assert guarded.disabled_players == set()
 
 
 # ---------------------------------------------------------------- the token

@@ -17,10 +17,19 @@ from spinalign.calibration.solver import (
 )
 
 
-def measurement(player_id, measured_ms, current=0):
+def measurement(player_id, measured_ms, current=0, delay_range_ms=None):
     return PlayerMeasurement(
-        player_id=player_id, name=player_id, measured_ms=measured_ms, current_adjust_ms=current
+        player_id=player_id,
+        name=player_id,
+        measured_ms=measured_ms,
+        current_adjust_ms=current,
+        delay_range_ms=delay_range_ms,
     )
+
+
+# What a Sendspin player reports: a latency compensation, so a positive value
+# makes the player run *early*, and it cannot go below zero.
+STATIC_DELAY = (0, 5000)
 
 
 def landings(solution, sign=1):
@@ -43,6 +52,64 @@ def test_aligns_everyone_to_the_slowest_speaker():
     # The slowest speaker sets the target and needs no correction of its own.
     assert solution.corrections[2].target_adjust_ms == 0
     assert solution.spread_after_ms < 1.0
+
+
+def test_an_advance_only_setting_pulls_everyone_forward_to_the_fastest():
+    """The Sendspin case, which crashed on live hardware.
+
+    ``static_delay_ms`` is a latency compensation: it can only make a player
+    run earlier, and it refuses anything below zero. Aiming at the slowest
+    speaker asks for a negative correction, and the server rejects the write
+    outright — so the target has to be the fastest speaker instead, with
+    everyone else brought forward to meet it.
+    """
+    solution = solve(
+        [
+            measurement("jack", 25.8, delay_range_ms=STATIC_DELAY),
+            measurement("jbl", 254.8, delay_range_ms=STATIC_DELAY),
+        ],
+        sign=-1,
+    )
+
+    assert solution.strategy == "align_to_fastest"
+    assert solution.fits
+    assert all(c.target_adjust_ms >= 0 for c in solution.corrections)
+    # The fastest speaker is the anchor; the other is advanced onto it.
+    assert dict((c.player_id, c.target_adjust_ms) for c in solution.corrections) == {
+        "jack": 0,
+        "jbl": 229,
+    }
+    assert solution.spread_after_ms < 1.0
+
+
+def test_a_range_the_spread_does_not_fit_into_is_reported_not_written_past():
+    solution = solve(
+        [
+            measurement("jack", 0.0, delay_range_ms=(0, 100)),
+            measurement("jbl", 400.0, delay_range_ms=(0, 100)),
+        ],
+        sign=-1,
+    )
+
+    assert not solution.fits
+    assert all(0 <= c.target_adjust_ms <= 100 for c in solution.corrections)
+
+
+def test_speakers_with_different_ranges_still_land_together():
+    """One speaker on Music Assistant's own ±500 ms setting, one on Sendspin's
+    advance-only one — a mixed group is the normal case, not the exception."""
+    solution = solve(
+        [
+            measurement("jack", 25.8, delay_range_ms=STATIC_DELAY),
+            measurement("airplay", 254.8, delay_range_ms=(-500, 500)),
+        ],
+        sign=-1,
+    )
+
+    assert solution.fits
+    assert solution.spread_after_ms < 1.0
+    by_id = {c.player_id: c for c in solution.corrections}
+    assert by_id["jack"].target_adjust_ms >= 0
 
 
 def test_existing_correction_is_backed_out():

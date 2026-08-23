@@ -45,6 +45,7 @@
   h1 { font-size: 20px; margin: 0 0 2px; }
   h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .sub.bad { color: var(--bad); }
 
   .card {
     background: var(--panel);
@@ -142,6 +143,29 @@
     font-size: 13px; font-weight: 500; cursor: pointer;
   }
   .link:hover { color: var(--bad); }
+
+  .setting {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  }
+  .setting label { font-size: 13px; color: var(--muted); }
+  .setting input {
+    width: 72px; font: inherit; text-align: right;
+    color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .setting .sub { margin: 0; flex: 1 1 100%; }
+
+  /* The manual on/off switch, under each speaker's verdict. */
+  .toggle {
+    display: block; margin: 5px 0 0 auto;
+    width: auto; padding: 4px 11px;
+    background: none; border: 1px solid var(--line); border-radius: 20px;
+    color: var(--muted); font-size: 12px; font-weight: 500;
+  }
+  .toggle:hover:enabled { color: var(--ink); border-color: var(--muted); }
+  tr.off td:first-child { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -152,6 +176,11 @@
   <div class="card">
     <h2>Колонки</h2>
     <table id="players"><tbody><tr><td colspan="3">Загрузка…</td></tr></tbody></table>
+    <p class="note">
+      Выключенную колонку калибровка не трогает: её не замеряют, в группу не берут
+      и задержку ей не меняют. Пригодится для сабвуфера, колонки в другой комнате
+      или той, что настроена вручную.
+    </p>
   </div>
 
   <div class="card">
@@ -160,13 +189,21 @@
       <span id="status">Положите телефон туда, где слушаете, и нажмите «Калибровать».</span>
     </div>
     <div class="bar"><i id="bar"></i></div>
+    <div class="setting">
+      <label for="chirps">Свистов на колонку</label>
+      <input id="chirps" type="number" min="3" max="40" step="1" inputmode="numeric">
+      <span class="sub" id="chirps-note">&nbsp;</span>
+    </div>
+
     <div style="margin-top:14px">
       <button id="run">Калибровать</button>
       <button id="probe" class="secondary">Проверить знак sync_adjust</button>
     </div>
     <p class="note">
       Во время замера будет тихо, потом колонки по очереди издадут короткие свисты.
-      Не двигайте телефон и старайтесь не шуметь.
+      Не двигайте телефон и старайтесь не шуметь. То, что играло, остановится:
+      трек ставится в очередь как обычное воспроизведение — только так работают
+      мьют и группа, на которых держится замер.
     </p>
   </div>
 

@@ -16,6 +16,7 @@ from sim.virtual_room import RoomConfig, VirtualSpeaker
 from spinalign.calibration.profiles import Profile, apply_profile
 from spinalign.calibration.session import SessionConfig, calibrate, measure_once
 from spinalign.calibration.validate import determine_sign
+from spinalign.ma.backend import PlayerInfo, SelectedSpeakers
 
 
 def make_server(speakers=None, **room_kwargs):
@@ -112,16 +113,18 @@ async def test_calibration_with_the_detected_sign_converges():
     assert report.spread_after_ms < 2.0
 
 
-async def test_wrong_sign_is_caught_by_the_verification_pass():
-    """Even if the probe were skipped, applying a backwards correction must not
-    be reported as a success."""
+async def test_a_backwards_correction_is_undone_rather_than_reported():
+    """Applying a correction the wrong way round doubles the error, and the
+    verification pass is what notices. Noticing is not enough on its own: the
+    system is left worse than it was found, so the run puts it right."""
     speakers = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
     server, recorder, clock = make_server(speakers, snr_db=30.0)
 
     report = await calibrate(server, recorder, sign=1, sleep=clock.sleep)
 
-    assert not report.improved
-    assert any("inverted" in problem for problem in report.problems)
+    assert report.improved
+    assert report.sign == -1
+    assert any("торопит" in problem for problem in report.problems)
 
 
 async def test_silent_speaker_does_not_poison_the_others():
@@ -159,6 +162,213 @@ async def test_a_saved_position_realigns_the_room_without_measuring_again():
     assert max(latencies) - min(latencies) < 3.0
 
 
+async def test_a_sync_group_reported_alongside_the_speakers_is_ignored():
+    """Music Assistant lists sync groups next to real players. One turned up on
+    live hardware and took the whole startup down with it, because a group has
+    no sync_adjust entry at all. It must simply sit the session out."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.extra_players = [
+        PlayerInfo(
+            player_id="syncgroup_wgsar5sd",
+            name="Везде",
+            provider="sendspin",
+            player_type="group",
+            sync_adjust_key=None,
+        )
+    ]
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert "syncgroup_wgsar5sd" not in {c.player_id for c in report.solution.corrections}
+    assert "syncgroup_wgsar5sd" not in dict(report.applied)
+
+
+async def test_a_speaker_switched_off_by_hand_sits_the_session_out():
+    """The manual switch is the user saying "leave this one alone", so the
+    speaker must be neither measured, nor grouped, nor written to — while the
+    remaining two still come out aligned."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    chosen = SelectedSpeakers(server, frozenset({"bt"}))
+
+    report = await calibrate(chosen, recorder, sleep=clock.sleep)
+
+    assert {c.player_id for c in report.solution.corrections} == {"esp32", "avr"}
+    assert "bt" not in {player_id for player_id, _ in server.writes}
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
+async def test_writing_to_a_switched_off_speaker_is_refused():
+    """Enforced at the boundary rather than trusted to hold in every caller —
+    the switch is worth nothing if one forgotten filter can defeat it."""
+    server, _, _ = make_server()
+    chosen = SelectedSpeakers(server, frozenset({"bt"}))
+
+    with pytest.raises(ValueError, match="switched off"):
+        await chosen.set_sync_adjust("bt", 120)
+
+    assert server.writes == []
+
+
+async def test_the_opening_speaker_is_already_audible_when_the_track_starts():
+    """The bug that produced a confident, wrong report on live hardware.
+
+    The opening speaker used to be unmuted *after* playback started, which
+    raced the stream. The analysis has no way to find the track's origin other
+    than treating the first chirp it hears as chirp zero, so opening chirps
+    lost to a late unmute do not cost a reading — they slide every round onto
+    the wrong speaker, and a wired speaker and a Bluetooth one come out
+    "aligned" to a fraction of a millisecond.
+    """
+    server, recorder, clock = make_server(snr_db=30.0)
+
+    await measure_once(server, recorder, await server.list_players(), sleep=clock.sleep)
+
+    # Sequence, not timestamps: on a virtual clock the two calls either side of
+    # the race read as simultaneous.
+    play = server.log.index(("play", "esp32"))
+    assert ("mute", "esp32", False) in server.log[:play]
+
+
+async def test_a_sendspin_style_advance_only_setting_converges():
+    """The live configuration, end to end.
+
+    A Sendspin player's delay setting is ``static_delay_ms``: a latency
+    compensation running 0–5000, so a positive value makes the player run
+    *early* and a negative one is refused outright. Aiming at the slowest
+    speaker asks for exactly that negative value — the run died on
+    "static_delay_ms must be in range 0-5000, got -247" — so the alignment has
+    to come forward onto the fastest speaker instead.
+    """
+    speakers = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
+    server, recorder, clock = make_server(speakers, snr_db=30.0)
+    server.delay_range_ms = (0, 5000)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert all(written >= 0 for _, written in server.writes)
+    # The fastest speaker anchors; the slowest is pulled the whole way forward.
+    assert dict(report.applied)["bt"] == pytest.approx(203, abs=2)
+
+
+async def test_an_inverted_server_is_recognised_and_corrected_within_the_run():
+    """A server where positive sync_adjust advances rather than delays.
+
+    Assuming the wrong way round is the worst outcome available: every
+    correction doubles the error instead of removing it — 229 ms of spread
+    became 460 on live hardware — and the run still finishes and writes its
+    numbers into Music Assistant. The verification pass already holds the
+    evidence, so the run reads it and puts itself right rather than handing the
+    user a system worse than it found.
+    """
+    inverted = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
+    server, recorder, clock = make_server(inverted, snr_db=30.0)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.observed_sign == -1
+    assert report.sign == -1
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert any("торопит" in problem for problem in report.problems)
+
+
+async def test_a_normal_server_is_left_alone_and_still_reports_its_convention():
+    server, recorder, clock = make_server(snr_db=30.0)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.observed_sign == 1
+    assert report.sign == 1
+    assert not report.problems
+
+
+async def test_a_measurement_where_one_speaker_was_audible_throughout_is_called_out():
+    """The signature of the failure that cost the most to find.
+
+    It does not look like a failure. If one speaker sounds through every round,
+    every round measures that speaker, all the readings agree, and the report
+    announces a system already in perfect alignment — which is exactly what
+    live hardware produced, with a wired output and a Bluetooth speaker
+    supposedly within half a millisecond of each other.
+    """
+    server, recorder, clock = make_server(snr_db=30.0)
+    # The exact live shape: the leader reports itself muted and sounds anyway,
+    # while the others never receive the stream at all.
+    server.mute_is_cosmetic = {"esp32"}
+    server.ungroupable = {"avr", "bt"}
+    server.report_group_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert any("круги никого не выделили" in problem for problem in report.problems)
+
+
+async def test_speakers_held_together_by_their_delays_are_not_called_out():
+    """A calibrated system measures the same way for the opposite reason: the
+    readings agree *because* the delays differ. Confusing the two would flag
+    every re-run of an already aligned setup."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    await calibrate(server, recorder, sleep=clock.sleep)
+
+    again = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert not [p for p in again.problems if "did not isolate" in p]
+
+
+async def test_a_speaker_that_ignores_mute_is_named():
+    """Muting is what makes a round a solo. A speaker that plays through
+    everyone else's rounds does not cost a reading either — every round then
+    measures that one speaker, and the result looks beautifully aligned."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.ignores_mute = {"esp32"}
+
+    with pytest.raises(RuntimeError, match="не отреагировали"):
+        await calibrate(server, recorder, sleep=clock.sleep)
+
+
+async def test_a_provider_that_reports_no_mute_state_is_not_second_guessed():
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.report_mute_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
+async def test_a_speaker_that_never_joins_the_group_is_named():
+    """Live hardware does this: the speaker plays music perfectly well but sits
+    out the test in silence, because it never joined the sync group and so
+    never received the stream. Left undetected it reads as "no usable chirps",
+    which sends the user hunting for a microphone problem in the room."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.ungroupable = {"bt"}
+
+    with pytest.raises(RuntimeError) as caught:
+        await calibrate(server, recorder, sleep=clock.sleep)
+
+    message = str(caught.value)
+    assert "Спальня (Bluetooth)" in message
+    assert "не встали в одну группу" in message
+
+
+async def test_a_provider_that_reports_no_group_state_is_not_second_guessed():
+    """Absence of evidence is not evidence of absence: refusing to measure when
+    a provider simply never populates the field would ground working setups."""
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.report_group_state = False
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
 async def test_refuses_to_calibrate_a_single_speaker():
     server, recorder, clock = make_server([mixed_speakers()[0]])
 
@@ -166,13 +376,24 @@ async def test_refuses_to_calibrate_a_single_speaker():
         await calibrate(server, recorder, sleep=clock.sleep)
 
 
-async def test_non_sendspin_players_are_left_alone():
-    """The measurement assumes protocol-level sync inside the group, which
-    only Sendspin guarantees, so other providers must not be swept in."""
+async def test_players_from_another_provider_still_calibrate():
+    """Provider is not a requirement. Whatever synchronisation error another
+    protocol introduces is part of what gets measured and corrected; only an
+    *unstable* one is a problem, and the outlier check is what catches that."""
     server, recorder, clock = make_server(snr_db=30.0)
     server.provider = "airplay"
 
-    with pytest.raises(ValueError, match="Sendspin"):
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+
+
+async def test_calibration_needs_two_usable_players():
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.speakers = server.speakers[:1]
+
+    with pytest.raises(ValueError, match="at least two"):
         await calibrate(server, recorder, sleep=clock.sleep)
 
 

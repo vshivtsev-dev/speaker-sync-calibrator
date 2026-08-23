@@ -21,9 +21,21 @@ function setStatus(text, kind) {
   el('dot').className = 'dot' + (kind ? ' ' + kind : '');
 }
 
-function setBusy(busy) {
-  el('run').disabled = busy;
-  el('probe').disabled = busy;
+let busy = false;      // a measurement is running
+let runnable = false;  // enough speakers are switched on to run one
+
+// Kept apart deliberately. Switching a speaker off can leave too few to
+// calibrate, and if that disabled the switches too, the user would have no way
+// to switch it back on again.
+function refreshControls() {
+  el('run').disabled = busy || !runnable;
+  el('probe').disabled = busy || !runnable;
+  document.querySelectorAll('#players .toggle').forEach((b) => { b.disabled = busy; });
+}
+
+function setBusy(value) {
+  busy = value;
+  refreshControls();
 }
 
 function setProgress(fraction) {
@@ -71,7 +83,10 @@ function connect() {
   socket = new WebSocket(socketUrl);
   socket.binaryType = 'arraybuffer';
 
-  socket.onopen = () => setStatus('Готово. Положите телефон туда, где слушаете.');
+  // The player list owns the status line: it is the thing that knows whether
+  // a calibration can actually start. Announcing "ready" here would overwrite
+  // an explanation of why the buttons are disabled.
+  socket.onopen = () => refreshPlayers();
   socket.onclose = () => {
     setStatus('Соединение потеряно, переподключаюсь…', 'err');
     setBusy(true);
@@ -138,6 +153,55 @@ function onProgress(message) {
   }
 }
 
+// ----------------------------------------------------------- round length
+
+// Filled from the server so the page never invents session parameters, and so
+// a value chosen on one device shows up on the next.
+let session = { chirps_per_round: 5, guard_chirps: 2, period_seconds: 1.3 };
+
+function chosenChirps() {
+  const asked = parseInt(el('chirps').value, 10);
+  return Number.isFinite(asked) ? asked : session.chirps_per_round;
+}
+
+function describeRoundLength() {
+  const chirps = chosenChirps();
+  const readings = chirps - session.guard_chirps;
+  const ready = players.filter((p) => p.calibratable).length;
+
+  if (readings < 1) {
+    el('chirps-note').textContent =
+      `Первые ${session.guard_chirps} свиста в каждом круге отбрасываются — их заглушает`
+      + ' переключение. Нужно больше.';
+    return;
+  }
+
+  // One round per speaker, plus a repeat of the first to measure clock drift,
+  // and the whole thing runs twice: measure, then verify.
+  const rounds = ready ? ready + 1 : 0;
+  const total = rounds * chirps;
+  const seconds = Math.round(total * session.period_seconds * 2);
+
+  let note = `${readings} ${plural(readings, 'отсчёт', 'отсчёта', 'отсчётов')} на колонку.`;
+  if (rounds) {
+    // Spelled out because the first speaker sounding twice is otherwise a
+    // surprise: at five per round it emits ten, and the count looks stuck.
+    note += ` Всего ${total} ${plural(total, 'свист', 'свиста', 'свистов')}:`
+      + ` первая колонка звучит дважды, по повтору измеряется уход часов телефона.`
+      + ` Замер с проверкой ≈ ${seconds} с.`;
+  }
+  el('chirps-note').textContent = note;
+}
+
+function plural(count, one, few, many) {
+  const mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = count % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
 // ------------------------------------------------------------------ players
 
 let players = [];
@@ -151,25 +215,86 @@ async function refreshPlayers() {
   const response = await fetch('/api/players');
   const data = await response.json();
   players = data.players;
+  session = data;
+
+  const chirps = el('chirps');
+  chirps.min = data.chirps_range[0];
+  chirps.max = data.chirps_range[1];
+  // Only while the field is not being edited, or typing would fight the poll.
+  if (document.activeElement !== chirps) chirps.value = data.chirps_per_round;
 
   const rows = players.map((p) => `
-    <tr>
-      <td>${escapeHtml(p.name)}</td>
-      <td class="num">${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс</td>
-      <td><span class="pill ${p.calibratable ? 'on' : 'off'}">${
-        p.calibratable ? 'готова' : (p.provider.startsWith('sendspin') ? 'недоступна' : p.provider)
-      }</span></td>
+    <tr class="${p.enabled ? '' : 'off'}">
+      <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
+        // When the delay setting was not found, show what the server did
+        // report: seeing the real names turns a mystery into a one-line fix.
+        !p.calibratable && p.config_keys && p.config_keys.length
+          ? `<br><span class="sub">настройки: ${escapeHtml(p.config_keys.join(', '))}</span>`
+          : ''
+      }${
+        // A failed read is a different fault from an absent setting, and the
+        // server's own words are what identify it.
+        p.config_error
+          ? `<br><span class="sub bad">${escapeHtml(p.config_error)}</span>`
+          : ''
+      }</td>
+      <td class="num">${p.calibratable
+        ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
+        : '—'}</td>
+      <td>
+        <span class="pill ${p.calibratable ? 'on' : 'off'}">${
+          escapeHtml(p.calibratable ? 'готова' : (p.excluded_because || 'не участвует'))
+        }</span>
+        <button class="toggle" data-toggle="${escapeAttr(p.player_id)}"
+                data-enable="${p.enabled ? '0' : '1'}"${busy ? ' disabled' : ''}>${
+          p.enabled ? 'выключить' : 'включить'
+        }</button>
+      </td>
     </tr>`).join('');
 
   el('players').innerHTML =
     `<thead><tr><th>Колонка</th><th>sync_adjust</th><th></th></tr></thead>
-     <tbody>${rows || '<tr><td colspan="3">Sendspin-колонки не найдены</td></tr>'}</tbody>`;
+     <tbody>${rows || '<tr><td colspan="3">Music Assistant не отдал ни одного плеера</td></tr>'}</tbody>`;
 
-  const ready = players.filter((p) => p.calibratable).length;
-  setBusy(ready < 2);
-  if (ready < 2) {
-    setStatus('Нужно минимум две доступные Sendspin-колонки.', 'err');
+  const ready = players.filter((p) => p.calibratable);
+  runnable = ready.length >= 2;
+  refreshControls();
+  describeRoundLength();
+
+  if (!runnable) {
+    setStatus(
+      players.length
+        ? 'Нужно минимум две включённые колонки. Причины — в списке выше.'
+        : 'Music Assistant не отдал ни одного плеера.',
+      'err',
+    );
+  } else if (ready.some((p) => !p.is_sendspin)) {
+    // Sendspin guarantees the tightest playback sync; other providers still
+    // work, since any offset they add is measured and corrected, but the
+    // result is only as steady as their own synchronisation.
+    setStatus(
+      `Готово, колонок: ${ready.length}. Часть из них не Sendspin — точность будет зависеть от их собственной синхронизации.`,
+    );
+  } else {
+    setStatus(`Готово, колонок: ${ready.length}. Положите телефон туда, где слушаете.`);
   }
+}
+
+async function setPlayerEnabled(playerId, enabled) {
+  try {
+    const response = await fetch(`/api/players/${encodeURIComponent(playerId)}/enabled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) throw new Error((await response.text()).trim());
+  } catch (error) {
+    setStatus('Не переключилось: ' + error.message, 'err');
+    return;
+  }
+  // The list owns the status line, so it has the last word on what the
+  // switch changed — including whether a run is still possible.
+  await refreshPlayers();
 }
 
 // ------------------------------------------------------------------- report
@@ -196,7 +321,13 @@ function showReport(report) {
   const notes = [];
   if (report.strategy === 'centered') {
     notes.push(['warn',
-      'Разброс больше 500 мс, поэтому поправки отсчитаны от середины, а не от самой медленной колонки.']);
+      'Разброс не покрывается односторонней задержкой, поэтому поправки отсчитаны от середины,'
+      + ' а не от самой медленной колонки.']);
+  }
+  if (report.strategy === 'align_to_fastest') {
+    notes.push(['',
+      'Настройка задержки на этих колонках умеет только торопить, но не задерживать,'
+      + ' поэтому все подтянуты к самой быстрой колонке.']);
   }
   if (!report.fits) {
     notes.push(['bad',
@@ -311,18 +442,24 @@ async function start(kind) {
     setProgress(0);
     await openMicrophone();
     if (audio.state === 'suspended') await audio.resume();
-    socket.send(JSON.stringify({ type: kind }));
+    socket.send(JSON.stringify({ type: kind, chirps_per_round: chosenChirps() }));
   } catch (error) {
     setStatus('Нет доступа к микрофону: ' + error.message, 'err');
     setBusy(false);
   }
 }
 
+el('chirps').addEventListener('input', describeRoundLength);
 el('run').addEventListener('click', () => start('calibrate'));
 el('probe').addEventListener('click', () => start('probe_sign'));
 el('save').addEventListener('click', saveProfile);
 
 // Delegated so the list can be re-rendered without rebinding every row.
+el('players').addEventListener('click', (event) => {
+  const toggle = event.target.closest('[data-toggle]');
+  if (toggle) setPlayerEnabled(toggle.dataset.toggle, toggle.dataset.enable === '1');
+});
+
 el('profiles').addEventListener('click', (event) => {
   const apply = event.target.closest('[data-apply]');
   if (apply) return applyProfile(apply.dataset.apply);

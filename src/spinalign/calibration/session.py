@@ -141,6 +141,16 @@ class CalibrationReport:
     after: MeasurementPass | None = None
     applied: tuple[tuple[str, int], ...] = ()
     sign: int = 1
+    """The convention the corrections were finally written under."""
+
+    observed_sign: int | None = None
+    """What the verification pass showed a positive ``sync_adjust`` doing.
+
+    ``None`` when the run produced no evidence either way. When it is set, it
+    is worth more than any assumption and worth remembering: establishing it
+    otherwise costs two dedicated measurement passes.
+    """
+
     problems: tuple[str, ...] = field(default=())
 
     @property
@@ -181,13 +191,30 @@ async def measure_once(
 
     leader = player_ids[0]
     await backend.set_group(leader, player_ids)
+    await confirm_group(backend, leader, player_ids, sleep=sleep)
 
-    # Silence everyone before the track starts so the opening round is clean.
+    # Open the first round's speaker *before* the track starts, not after.
+    #
+    # Unmuting it afterwards races the stream, and losing that race is not
+    # worth a reading — it is worth the whole measurement. The analysis has no
+    # other way to find the track's origin than to treat the first chirp it
+    # hears as chirp zero, so opening chirps lost to a late unmute slide every
+    # round onto the wrong speaker. The result still looks like a result:
+    # speakers "measure" each other's arrival times and come out suspiciously
+    # aligned.
+    # Both directions are checked, and both matter: a speaker that cannot be
+    # muted plays through every other speaker's round, and one that cannot be
+    # unmuted never sounds at all.
     for player_id in player_ids:
         await backend.set_muted(player_id, True)
+    await confirm_mute(backend, dict.fromkeys(player_ids, True), sleep=sleep)
+
+    opening = rounds[0].player_id
+    await backend.set_muted(opening, False)
+    await confirm_mute(backend, {opening: False}, sleep=sleep)
 
     await recorder.start(signal)
-    audible: str | None = None
+    audible: str | None = opening
 
     try:
         await backend.play_url(leader, _resolve_url(signal_url, signal))
@@ -237,6 +264,119 @@ async def measure_once(
     )
 
 
+GROUP_CONFIRM_TIMEOUT_SECONDS = 4.0
+GROUP_POLL_SECONDS = 0.5
+MUTE_CONFIRM_TIMEOUT_SECONDS = 4.0
+
+
+async def confirm_mute(
+    backend: SpeakerBackend,
+    wanted: dict[str, bool],
+    *,
+    sleep: Sleeper = asyncio.sleep,
+    timeout: float = MUTE_CONFIRM_TIMEOUT_SECONDS,
+) -> None:
+    """Check the speakers really went quiet before playing anything.
+
+    Muting is what makes a round a solo, and Music Assistant has a per-player
+    setting for how — or whether — it can mute at all. A speaker that ignores
+    the command plays straight through everyone else's rounds, and the damage
+    is not a missing reading: every round then measures the speaker that would
+    not shut up, so the speakers come out looking perfectly aligned.
+
+    As with grouping, silence about the state is not a failure. A provider that
+    never reports its mute state cannot be checked, and refusing to measure on
+    that basis would ground a working setup.
+    """
+    deadline = timeout
+    while True:
+        players = {p.player_id: p for p in await backend.list_players()}
+        stuck = [
+            player_id
+            for player_id, muted in wanted.items()
+            if player_id in players
+            and players[player_id].muted is not None
+            and players[player_id].muted != muted
+        ]
+        if not stuck:
+            return
+        if deadline <= 0:
+            names = ", ".join(f"«{players[pid].name}»" for pid in stuck)
+            raise RuntimeError(
+                f"эти колонки не отреагировали на команду заглушить: {names}. "
+                "Замер требует, чтобы в каждом круге звучала ровно одна колонка, "
+                "иначе все круги измерят одну и ту же. Проверьте в Music Assistant "
+                "настройку mute_control у этих колонок."
+            )
+
+        await sleep(GROUP_POLL_SECONDS)
+        deadline -= GROUP_POLL_SECONDS
+
+
+async def confirm_group(
+    backend: SpeakerBackend,
+    leader: str,
+    player_ids: Sequence[str],
+    *,
+    sleep: Sleeper = asyncio.sleep,
+    timeout: float = GROUP_CONFIRM_TIMEOUT_SECONDS,
+) -> None:
+    """Check the speakers really joined the group before playing anything.
+
+    The whole method rests on one stream reaching every speaker at once: that
+    common stream is what gives the rounds a shared time base. A speaker that
+    silently failed to join is not a degraded measurement, it is no measurement
+    — it renders as silence, and the only symptom is "no usable chirps", which
+    reads like a microphone problem and sends the user hunting in the room.
+
+    Missing information is not treated as failure. A provider that never
+    populates ``group_members`` would otherwise ground a setup that works, so
+    the check needs positive evidence of exclusion before it refuses.
+    """
+    deadline = timeout
+    while True:
+        players = {p.player_id: p for p in await backend.list_players()}
+        grouped = set(players[leader].group_members) if leader in players else set()
+        if not grouped:
+            return  # nothing reported: no evidence either way
+
+        missing = [pid for pid in player_ids if pid != leader and pid not in grouped]
+        if not missing:
+            return
+        if deadline <= 0:
+            raise RuntimeError(_group_failure_message(players, leader, missing))
+
+        # Grouping is a command, not a transaction; the state follows it.
+        await sleep(GROUP_POLL_SECONDS)
+        deadline -= GROUP_POLL_SECONDS
+
+
+def _group_failure_message(players: dict, leader: str, missing: Sequence[str]) -> str:
+    def describe(player_id: str) -> str:
+        player = players.get(player_id)
+        return player.name if player else player_id
+
+    names = ", ".join(describe(pid) for pid in missing)
+    lines = [
+        f"эти колонки не встали в одну группу с «{describe(leader)}», "
+        f"поэтому они не услышат тестовый трек: {names}.",
+        "Замер сравнивает время прихода одного и того же потока, так что "
+        "колонка вне группы измерена быть не может.",
+    ]
+
+    leader_player = players.get(leader)
+    for player_id in missing:
+        player = players.get(player_id)
+        if player is None or leader_player is None:
+            continue
+        if not player.can_group_with_player(leader_player):
+            lines.append(
+                f"Music Assistant не объединяет «{player.name}» с «{leader_player.name}» — "
+                "их провайдеры несовместимы; выключите одну из них."
+            )
+    return " ".join(lines)
+
+
 def build_measurements(
     pass_: MeasurementPass, players: Sequence[PlayerInfo]
 ) -> list[PlayerMeasurement]:
@@ -249,6 +389,7 @@ def build_measurements(
             measured_ms=reading.latency_ms,
             current_adjust_ms=by_id[player_id].sync_adjust_ms if player_id in by_id else 0,
             spread_ms=reading.spread_ms,
+            delay_range_ms=by_id[player_id].delay_range_ms if player_id in by_id else None,
         )
         for player_id, reading in pass_.analysis.readings.items()
     ]
@@ -257,18 +398,116 @@ def build_measurements(
 async def apply_solution(
     backend: SpeakerBackend,
     solution: CalibrationSolution,
+    *,
+    only_changed: bool = True,
 ) -> tuple[tuple[str, int], ...]:
-    """Write every changed correction in one batch.
+    """Write the corrections in one batch.
 
     Music Assistant marks ``sync_adjust`` as requiring a reload, so each write
     interrupts the player. Batching them at the end of the session keeps that
     to a single disruption instead of one per measurement.
+
+    ``only_changed`` skips the speakers already sitting at their target, which
+    is the right thing on a first pass. It has to be off when re-applying after
+    a sign correction: a speaker whose new target happens to equal what it
+    started at looks unchanged, while the device is actually holding the
+    previous attempt's value.
     """
+    corrections = solution.changed() if only_changed else solution.corrections
     applied: list[tuple[str, int]] = []
-    for correction in solution.changed():
+    for correction in corrections:
         await backend.set_sync_adjust(correction.player_id, correction.target_adjust_ms)
         applied.append((correction.player_id, correction.target_adjust_ms))
     return tuple(applied)
+
+
+MIN_SIGN_EVIDENCE_MS = 20.0
+"""Smallest difference in written correction worth reading a direction from."""
+
+SIGN_TOLERANCE = 0.35
+"""How far the observed movement may be from the movement asked for."""
+
+
+def observed_convention(
+    before: MeasurementPass,
+    after: MeasurementPass,
+    solution: CalibrationSolution,
+) -> int | None:
+    """What a positive ``sync_adjust`` actually did, read off the two passes.
+
+    The verification pass is already a sign probe: corrections of known size
+    went in, and the arrival times moved. Comparing two speakers rather than
+    looking at one in isolation is what makes it readable — each pass has its
+    own arbitrary origin, and the difference between two speakers cancels it,
+    exactly as the dedicated probe in :mod:`spinalign.calibration.validate`
+    does.
+
+    Returns ``1`` when a positive correction delays a player, ``-1`` when it
+    advances one, and ``None`` when the evidence is too weak to say — a run
+    that wrote nearly equal corrections everywhere, or a player that ignored
+    the write.
+    """
+    points = [
+        (
+            correction.target_adjust_ms - correction.current_adjust_ms,
+            after.latencies_ms[correction.player_id] - before.latencies_ms[correction.player_id],
+        )
+        for correction in solution.corrections
+        if correction.player_id in before.latencies_ms
+        and correction.player_id in after.latencies_ms
+    ]
+    if len(points) < 2:
+        return None
+
+    least, most = min(points), max(points)
+    span = most[0] - least[0]
+    if span < MIN_SIGN_EVIDENCE_MS:
+        return None
+
+    moved = (most[1] - least[1]) / span
+    if abs(abs(moved) - 1.0) > SIGN_TOLERANCE:
+        return None  # nothing like what was asked for: not a sign question
+
+    return 1 if moved > 0 else -1
+
+
+INDISTINGUISHABLE_MS = 0.2
+"""Closer than two independent speakers plausibly land without help."""
+
+
+def _check_the_rounds_isolated(
+    pass_: MeasurementPass, players: Sequence[PlayerInfo]
+) -> list[str]:
+    """Notice a measurement in which every round heard the same speaker.
+
+    This is the failure that costs the most to diagnose, because it does not
+    look like a failure: if one speaker is audible throughout, every round
+    measures that speaker, every reading agrees, and the report announces a
+    system already in perfect alignment. It has been caused by an announcement
+    overriding mute, by a speaker that never joined the group, and by the
+    opening chirps being lost — three different faults with one signature.
+
+    Uncorrected speakers landing within a fraction of a millisecond of each
+    other is what gives it away. The corrections in force are what separates
+    this from a system that is genuinely aligned: there, the readings agree
+    *because* the delays differ, and here nothing is compensating anything.
+    """
+    latencies = pass_.latencies_ms
+    if len(latencies) < 2 or max(latencies.values()) - min(latencies.values()) > (
+        INDISTINGUISHABLE_MS
+    ):
+        return []
+
+    corrections = {p.sync_adjust_ms for p in players if p.player_id in latencies}
+    if len(corrections) > 1:
+        return []  # they agree because their delays differ — that is alignment
+
+    return [
+        f"все колонки измерились одинаково с точностью до {INDISTINGUISHABLE_MS} мс, "
+        "хотя задержка у всех одна и та же — значит, круги никого не выделили: почти "
+        "наверняка одна колонка звучала всё время, а остальные молчали. Проверьте, что "
+        "каждая колонка действительно звучит в свою очередь."
+    ]
 
 
 async def calibrate(
@@ -287,7 +526,10 @@ async def calibrate(
     cfg = config or SessionConfig()
     players = [p for p in await backend.list_players() if p.is_calibratable]
     if len(players) < 2:
-        raise ValueError("need at least two available Sendspin players to calibrate")
+        raise ValueError(
+            "need at least two players that make a sound and carry a sync_adjust "
+            "setting"
+        )
 
     _report(progress, stage="pass", which="before", players=len(players))
     before = await measure_once(
@@ -301,13 +543,23 @@ async def calibrate(
         progress=progress,
     )
     problems = list(before.analysis.problems)
-    solution = solve(build_measurements(before, players), sign=sign)
+    problems.extend(_check_the_rounds_isolated(before, players))
 
-    _report(progress, stage="applying", writes=len(solution.changed()))
-    applied = await apply_solution(backend, solution)
-
+    measurements = build_measurements(before, players)
     after: MeasurementPass | None = None
-    if verify and applied:
+    observed: int | None = None
+    corrected_sign = False
+
+    while True:
+        solution = solve(measurements, sign=sign)
+
+        writes = solution.corrections if corrected_sign else solution.changed()
+        _report(progress, stage="applying", writes=len(writes))
+        applied = await apply_solution(backend, solution, only_changed=not corrected_sign)
+
+        if not (verify and applied):
+            break
+
         _report(progress, stage="pass", which="after", players=len(players))
         refreshed = [p for p in await backend.list_players() if p.is_calibratable]
         after = await measure_once(
@@ -321,11 +573,27 @@ async def calibrate(
             progress=progress,
         )
         problems.extend(after.analysis.problems)
+
+        # The verification pass is itself a sign probe: known corrections went
+        # in and the arrivals moved. Reading it costs nothing and settles the
+        # one question that turns a calibration into its own opposite.
+        observed = observed_convention(before, after, solution)
+        if observed is not None and observed != sign and not corrected_sign:
+            sign = observed
+            corrected_sign = True
+            problems.append(
+                "на этом сервере положительный sync_adjust не задерживает колонку, "
+                "а торопит, поэтому первая попытка удвоила расхождение вместо того чтобы "
+                "его убрать. Поправки записаны заново, в обратную сторону."
+            )
+            continue
+
         if after.relative_spread_ms() > before.relative_spread_ms():
             problems.append(
-                "alignment got worse after applying — the sync_adjust sign may be "
-                "inverted on this server, or a player ignored the write"
+                "после применения стало хуже — либо колонка проигнорировала запись, "
+                "либо знак sync_adjust на этом сервере не такой, как показал замер"
             )
+        break
 
     return CalibrationReport(
         before=before,
@@ -333,6 +601,7 @@ async def calibrate(
         after=after,
         applied=applied,
         sign=sign,
+        observed_sign=observed,
         # A fault present in both passes reports itself twice; the reader
         # learns nothing from the repetition. dict preserves first-seen order.
         problems=tuple(dict.fromkeys(problems)),

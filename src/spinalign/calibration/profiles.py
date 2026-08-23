@@ -152,12 +152,18 @@ class ApplyOutcome:
 
 
 class ProfileStore:
-    """Profiles and the remembered sign convention, in one JSON file."""
+    """Everything the app has to remember between runs, in one JSON file.
+
+    Profiles, the probed sign convention, and which speakers the user has
+    switched off by hand.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self._sign = 1
         self._sign_checked = False
+        self._disabled: set[str] = set()
+        self._chirps_per_round = 0
         self._profiles: dict[str, Profile] = {}
         self._load()
 
@@ -179,6 +185,29 @@ class ProfileStore:
     def remember_sign(self, sign: int, checked: bool) -> None:
         self._sign = 1 if sign not in (1, -1) else sign
         self._sign_checked = bool(checked)
+        self._write()
+
+    @property
+    def chirps_per_round(self) -> int:
+        """Round length last asked for, or 0 when never set."""
+        return self._chirps_per_round
+
+    def remember_chirps_per_round(self, chirps: int) -> None:
+        self._chirps_per_round = int(chirps)
+        self._write()
+
+    # ------------------------------------------------------ manual switches
+
+    @property
+    def disabled_players(self) -> frozenset[str]:
+        """Speakers the user has switched off, by player id."""
+        return frozenset(self._disabled)
+
+    def set_player_enabled(self, player_id: str, enabled: bool) -> None:
+        if enabled:
+            self._disabled.discard(player_id)
+        else:
+            self._disabled.add(player_id)
         self._write()
 
     # -------------------------------------------------------------- profiles
@@ -220,6 +249,8 @@ class ProfileStore:
 
         self._sign = payload.get("sign", 1) if payload.get("sign") in (1, -1) else 1
         self._sign_checked = bool(payload.get("sign_checked", False))
+        self._disabled = {str(pid) for pid in payload.get("disabled_players") or []}
+        self._chirps_per_round = int(payload.get("chirps_per_round") or 0)
 
         for name, entry in (payload.get("profiles") or {}).items():
             try:
@@ -232,6 +263,8 @@ class ProfileStore:
             "version": STATE_VERSION,
             "sign": self._sign,
             "sign_checked": self._sign_checked,
+            "disabled_players": sorted(self._disabled),
+            "chirps_per_round": self._chirps_per_round,
             "profiles": {name: profile.to_dict() for name, profile in self._profiles.items()},
         }
 
@@ -281,6 +314,7 @@ async def apply_profile(backend: SpeakerBackend, profile: Profile) -> ApplyOutco
             # correction again, recovering the stored value exactly.
             measured_ms=speaker.intrinsic_ms + profile.sign * present[player_id].sync_adjust_ms,
             current_adjust_ms=present[player_id].sync_adjust_ms,
+            delay_range_ms=present[player_id].delay_range_ms,
         )
         for player_id, speaker in stored.items()
         if player_id in present
