@@ -540,6 +540,10 @@ async def _run_job(
             progress=lambda event: progress({"type": "progress", **event}),
         )
         state.last_report = report
+        # A run that saw which way the corrections moved has established the
+        # convention as firmly as the dedicated probe would have, and for free.
+        if report.observed_sign is not None:
+            state.remember_sign(report.observed_sign, checked=True)
         outbox.put_nowait({"type": "report", **describe(report)})
     except Exception as error:  # surfaced to the user rather than swallowed
         logger.exception("calibration failed")

@@ -160,6 +160,24 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+### Which way `sync_adjust` runs
+
+Music Assistant documents `sync_adjust` as a millisecond correction but not
+which direction is which, and servers differ. Getting it backwards is the worst
+outcome available: every correction doubles the error rather than removing it,
+and the run still writes its numbers into Music Assistant. On live hardware
+229 ms of spread became 460.
+
+The verification pass settles it without being asked. Corrections of known size
+went in and the arrival times moved, so comparing two speakers — which cancels
+each pass's arbitrary origin — says which way the setting runs. When it
+contradicts what the run assumed, the corrections are re-applied the other way
+round and verified again, and the convention is remembered for next time.
+
+The separate probe under the Calibrate button does the same thing deliberately,
+at the cost of two measurement passes, and is worth running once if you would
+rather establish it before anything is written.
+
 ### How the track is played
 
 Through the group's queue, as ordinary playback — not as an announcement.

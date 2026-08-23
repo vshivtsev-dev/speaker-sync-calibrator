@@ -113,16 +113,18 @@ async def test_calibration_with_the_detected_sign_converges():
     assert report.spread_after_ms < 2.0
 
 
-async def test_wrong_sign_is_caught_by_the_verification_pass():
-    """Even if the probe were skipped, applying a backwards correction must not
-    be reported as a success."""
+async def test_a_backwards_correction_is_undone_rather_than_reported():
+    """Applying a correction the wrong way round doubles the error, and the
+    verification pass is what notices. Noticing is not enough on its own: the
+    system is left worse than it was found, so the run puts it right."""
     speakers = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
     server, recorder, clock = make_server(speakers, snr_db=30.0)
 
     report = await calibrate(server, recorder, sign=1, sleep=clock.sleep)
 
-    assert not report.improved
-    assert any("inverted" in problem for problem in report.problems)
+    assert report.improved
+    assert report.sign == -1
+    assert any("торопит" in problem for problem in report.problems)
 
 
 async def test_silent_speaker_does_not_poison_the_others():
@@ -230,6 +232,38 @@ async def test_the_opening_speaker_is_already_audible_when_the_track_starts():
     assert ("mute", "esp32", False) in server.log[:play]
 
 
+async def test_an_inverted_server_is_recognised_and_corrected_within_the_run():
+    """A server where positive sync_adjust advances rather than delays.
+
+    Assuming the wrong way round is the worst outcome available: every
+    correction doubles the error instead of removing it — 229 ms of spread
+    became 460 on live hardware — and the run still finishes and writes its
+    numbers into Music Assistant. The verification pass already holds the
+    evidence, so the run reads it and puts itself right rather than handing the
+    user a system worse than it found.
+    """
+    inverted = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
+    server, recorder, clock = make_server(inverted, snr_db=30.0)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.observed_sign == -1
+    assert report.sign == -1
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert any("торопит" in problem for problem in report.problems)
+
+
+async def test_a_normal_server_is_left_alone_and_still_reports_its_convention():
+    server, recorder, clock = make_server(snr_db=30.0)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.observed_sign == 1
+    assert report.sign == 1
+    assert not report.problems
+
+
 async def test_a_measurement_where_one_speaker_was_audible_throughout_is_called_out():
     """The signature of the failure that cost the most to find.
 
@@ -248,7 +282,7 @@ async def test_a_measurement_where_one_speaker_was_audible_throughout_is_called_
 
     report = await calibrate(server, recorder, sleep=clock.sleep)
 
-    assert any("did not isolate" in problem for problem in report.problems)
+    assert any("круги никого не выделили" in problem for problem in report.problems)
 
 
 async def test_speakers_held_together_by_their_delays_are_not_called_out():

@@ -141,6 +141,16 @@ class CalibrationReport:
     after: MeasurementPass | None = None
     applied: tuple[tuple[str, int], ...] = ()
     sign: int = 1
+    """The convention the corrections were finally written under."""
+
+    observed_sign: int | None = None
+    """What the verification pass showed a positive ``sync_adjust`` doing.
+
+    ``None`` when the run produced no evidence either way. When it is set, it
+    is worth more than any assumption and worth remembering: establishing it
+    otherwise costs two dedicated measurement passes.
+    """
+
     problems: tuple[str, ...] = field(default=())
 
     @property
@@ -387,18 +397,77 @@ def build_measurements(
 async def apply_solution(
     backend: SpeakerBackend,
     solution: CalibrationSolution,
+    *,
+    only_changed: bool = True,
 ) -> tuple[tuple[str, int], ...]:
-    """Write every changed correction in one batch.
+    """Write the corrections in one batch.
 
     Music Assistant marks ``sync_adjust`` as requiring a reload, so each write
     interrupts the player. Batching them at the end of the session keeps that
     to a single disruption instead of one per measurement.
+
+    ``only_changed`` skips the speakers already sitting at their target, which
+    is the right thing on a first pass. It has to be off when re-applying after
+    a sign correction: a speaker whose new target happens to equal what it
+    started at looks unchanged, while the device is actually holding the
+    previous attempt's value.
     """
+    corrections = solution.changed() if only_changed else solution.corrections
     applied: list[tuple[str, int]] = []
-    for correction in solution.changed():
+    for correction in corrections:
         await backend.set_sync_adjust(correction.player_id, correction.target_adjust_ms)
         applied.append((correction.player_id, correction.target_adjust_ms))
     return tuple(applied)
+
+
+MIN_SIGN_EVIDENCE_MS = 20.0
+"""Smallest difference in written correction worth reading a direction from."""
+
+SIGN_TOLERANCE = 0.35
+"""How far the observed movement may be from the movement asked for."""
+
+
+def observed_convention(
+    before: MeasurementPass,
+    after: MeasurementPass,
+    solution: CalibrationSolution,
+) -> int | None:
+    """What a positive ``sync_adjust`` actually did, read off the two passes.
+
+    The verification pass is already a sign probe: corrections of known size
+    went in, and the arrival times moved. Comparing two speakers rather than
+    looking at one in isolation is what makes it readable — each pass has its
+    own arbitrary origin, and the difference between two speakers cancels it,
+    exactly as the dedicated probe in :mod:`spinalign.calibration.validate`
+    does.
+
+    Returns ``1`` when a positive correction delays a player, ``-1`` when it
+    advances one, and ``None`` when the evidence is too weak to say — a run
+    that wrote nearly equal corrections everywhere, or a player that ignored
+    the write.
+    """
+    points = [
+        (
+            correction.target_adjust_ms - correction.current_adjust_ms,
+            after.latencies_ms[correction.player_id] - before.latencies_ms[correction.player_id],
+        )
+        for correction in solution.corrections
+        if correction.player_id in before.latencies_ms
+        and correction.player_id in after.latencies_ms
+    ]
+    if len(points) < 2:
+        return None
+
+    least, most = min(points), max(points)
+    span = most[0] - least[0]
+    if span < MIN_SIGN_EVIDENCE_MS:
+        return None
+
+    moved = (most[1] - least[1]) / span
+    if abs(abs(moved) - 1.0) > SIGN_TOLERANCE:
+        return None  # nothing like what was asked for: not a sign question
+
+    return 1 if moved > 0 else -1
 
 
 INDISTINGUISHABLE_MS = 0.2
@@ -433,11 +502,10 @@ def _check_the_rounds_isolated(
         return []  # they agree because their delays differ — that is alignment
 
     return [
-        "every speaker measured the same arrival time to within "
-        f"{INDISTINGUISHABLE_MS} ms while all of them sit at the same delay, so the "
-        "rounds did not isolate anyone: one speaker was almost certainly audible "
-        "throughout and the others silent. Check that each speaker really does "
-        "sound on its own turn."
+        f"все колонки измерились одинаково с точностью до {INDISTINGUISHABLE_MS} мс, "
+        "хотя задержка у всех одна и та же — значит, круги никого не выделили: почти "
+        "наверняка одна колонка звучала всё время, а остальные молчали. Проверьте, что "
+        "каждая колонка действительно звучит в свою очередь."
     ]
 
 
@@ -475,13 +543,22 @@ async def calibrate(
     )
     problems = list(before.analysis.problems)
     problems.extend(_check_the_rounds_isolated(before, players))
-    solution = solve(build_measurements(before, players), sign=sign)
 
-    _report(progress, stage="applying", writes=len(solution.changed()))
-    applied = await apply_solution(backend, solution)
-
+    measurements = build_measurements(before, players)
     after: MeasurementPass | None = None
-    if verify and applied:
+    observed: int | None = None
+    corrected_sign = False
+
+    while True:
+        solution = solve(measurements, sign=sign)
+
+        writes = solution.corrections if corrected_sign else solution.changed()
+        _report(progress, stage="applying", writes=len(writes))
+        applied = await apply_solution(backend, solution, only_changed=not corrected_sign)
+
+        if not (verify and applied):
+            break
+
         _report(progress, stage="pass", which="after", players=len(players))
         refreshed = [p for p in await backend.list_players() if p.is_calibratable]
         after = await measure_once(
@@ -495,11 +572,27 @@ async def calibrate(
             progress=progress,
         )
         problems.extend(after.analysis.problems)
+
+        # The verification pass is itself a sign probe: known corrections went
+        # in and the arrivals moved. Reading it costs nothing and settles the
+        # one question that turns a calibration into its own opposite.
+        observed = observed_convention(before, after, solution)
+        if observed is not None and observed != sign and not corrected_sign:
+            sign = observed
+            corrected_sign = True
+            problems.append(
+                "на этом сервере положительный sync_adjust не задерживает колонку, "
+                "а торопит, поэтому первая попытка удвоила расхождение вместо того чтобы "
+                "его убрать. Поправки записаны заново, в обратную сторону."
+            )
+            continue
+
         if after.relative_spread_ms() > before.relative_spread_ms():
             problems.append(
-                "alignment got worse after applying — the sync_adjust sign may be "
-                "inverted on this server, or a player ignored the write"
+                "после применения стало хуже — либо колонка проигнорировала запись, "
+                "либо знак sync_adjust на этом сервере не такой, как показал замер"
             )
+        break
 
     return CalibrationReport(
         before=before,
@@ -507,6 +600,7 @@ async def calibrate(
         after=after,
         applied=applied,
         sign=sign,
+        observed_sign=observed,
         # A fault present in both passes reports itself twice; the reader
         # learns nothing from the repetition. dict preserves first-seen order.
         problems=tuple(dict.fromkeys(problems)),

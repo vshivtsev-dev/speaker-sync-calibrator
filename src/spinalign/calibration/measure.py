@@ -125,7 +125,7 @@ def analyze(
     reference speaker audible, so chirp zero is reliably present.
     """
     if not arrivals:
-        return MeasurementAnalysis({}, 0.0, ("no chirps were detected in the recording",))
+        return MeasurementAnalysis({}, 0.0, ("в записи не найдено ни одного свиста",))
 
     offset = min(a.chirp_index for a in arrivals)
     by_chirp = {a.chirp_index - offset: a for a in arrivals}
@@ -143,7 +143,7 @@ def analyze(
         ]
         per_round.append((plan, readings_in_round))
         if not readings_in_round:
-            problems.append(f"no usable chirps for {plan.player_id}")
+            problems.append(f"{plan.player_id}: не слышно ни одного свиста в своём круге")
 
     drift_rate, drift_origin, drift_total = _estimate_drift(per_round)
 
@@ -166,8 +166,8 @@ def analyze(
         )
         if worst_ms > OUTLIER_TOLERANCE_MS:
             problems.append(
-                f"{plan.player_id}: one reading is {worst_ms:.1f} ms away from the others, "
-                "so the recording or the stream glitched during this round"
+                f"{plan.player_id}: один отсчёт отличается от остальных на {worst_ms:.1f} мс — "
+                "в этом круге сбоила запись или поток"
             )
 
         readings[plan.player_id] = SpeakerReading(
@@ -179,7 +179,7 @@ def analyze(
         )
 
     if len(readings) < 2:
-        problems.append("fewer than two speakers produced a usable reading")
+        problems.append("годный отсчёт дала меньше чем одна пара колонок")
 
     return MeasurementAnalysis(
         readings=readings,
