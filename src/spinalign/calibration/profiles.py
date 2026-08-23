@@ -314,6 +314,7 @@ async def apply_profile(backend: SpeakerBackend, profile: Profile) -> ApplyOutco
             # correction again, recovering the stored value exactly.
             measured_ms=speaker.intrinsic_ms + profile.sign * present[player_id].sync_adjust_ms,
             current_adjust_ms=present[player_id].sync_adjust_ms,
+            delay_range_ms=present[player_id].delay_range_ms,
         )
         for player_id, speaker in stored.items()
         if player_id in present

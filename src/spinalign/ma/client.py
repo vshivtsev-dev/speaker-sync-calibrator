@@ -211,6 +211,7 @@ class MusicAssistantBackend:
                     can_group_with=tuple(getattr(player, "can_group_with", ()) or ()),
                     sync_adjust_ms=_current_value(delay),
                     sync_adjust_key=delay.key if delay is not None else None,
+                    delay_range_ms=_delay_range(delay),
                     config_keys=tuple(entry.key for entry in entries),
                     config_error=config_error,
                 )
@@ -358,6 +359,22 @@ def _looks_like_a_delay(entry) -> bool:
 
     text = f"{entry.key} {getattr(entry, 'label', '') or ''}".lower()
     return any(word in text for word in DELAY_WORDS)
+
+
+def _delay_range(entry) -> tuple[int, int] | None:
+    """The bounds the server will accept, when it states them.
+
+    Writing outside them is refused outright — a Sendspin player's
+    ``static_delay_ms`` runs 0–5000 and rejected a negative correction — so the
+    solver needs the real numbers rather than an assumed ±500.
+    """
+    if entry is None:
+        return None
+    try:
+        low, high = entry.range
+        return int(low), int(high)
+    except (TypeError, ValueError):
+        return None
 
 
 def _range_span(value) -> float | None:

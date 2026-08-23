@@ -232,6 +232,29 @@ async def test_the_opening_speaker_is_already_audible_when_the_track_starts():
     assert ("mute", "esp32", False) in server.log[:play]
 
 
+async def test_a_sendspin_style_advance_only_setting_converges():
+    """The live configuration, end to end.
+
+    A Sendspin player's delay setting is ``static_delay_ms``: a latency
+    compensation running 0–5000, so a positive value makes the player run
+    *early* and a negative one is refused outright. Aiming at the slowest
+    speaker asks for exactly that negative value — the run died on
+    "static_delay_ms must be in range 0-5000, got -247" — so the alignment has
+    to come forward onto the fastest speaker instead.
+    """
+    speakers = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
+    server, recorder, clock = make_server(speakers, snr_db=30.0)
+    server.delay_range_ms = (0, 5000)
+
+    report = await calibrate(server, recorder, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert all(written >= 0 for _, written in server.writes)
+    # The fastest speaker anchors; the slowest is pulled the whole way forward.
+    assert dict(report.applied)["bt"] == pytest.approx(203, abs=2)
+
+
 async def test_an_inverted_server_is_recognised_and_corrected_within_the_run():
     """A server where positive sync_adjust advances rather than delays.
 

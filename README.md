@@ -160,6 +160,20 @@ spinalign players --ma-url http://192.168.1.10:8095
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
 
+### What the delay setting will accept
+
+Its range comes from the server, not from an assumption. Music Assistant's own
+`sync_adjust` is a symmetric ±500 ms, but a Sendspin player carries
+`static_delay_ms`, which runs 0–5000: it is a latency compensation, so a
+positive value makes the player run *early*, and a negative one is refused
+outright rather than clamped.
+
+That changes where the alignment can aim. Nothing can be delayed on such a
+setting, so the target is the *fastest* speaker and everyone else is pulled
+forward to meet it. The solver takes each speaker's own accepted range, works
+out which arrival times are within everybody's reach, and picks from that —
+which also means a group mixing both kinds of setting still lands together.
+
 ### Which way `sync_adjust` runs
 
 Music Assistant documents `sync_adjust` as a millisecond correction but not

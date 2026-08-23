@@ -83,6 +83,14 @@ class FakeMusicAssistant:
     sounded through every round.
     """
 
+    delay_range_ms: tuple[int, int] | None = None
+    """What the delay setting accepts, and what it refuses.
+
+    ``None`` is Music Assistant's own symmetric ``sync_adjust``. A Sendspin
+    player instead carries ``static_delay_ms`` at ``(0, 5000)``: advance-only,
+    and the server rejects anything outside it rather than clamping.
+    """
+
     report_mute_state: bool = True
     report_group_state: bool = True
     """Whether this server tells anyone who is in the group.
@@ -118,6 +126,7 @@ class FakeMusicAssistant:
                 available=True,
                 muted=self._reported_mute(s.player_id) if self.report_mute_state else None,
                 sync_adjust_ms=s.sync_adjust_ms,
+                delay_range_ms=self.delay_range_ms,
                 # Only the leader carries the membership, which is how Music
                 # Assistant reports a sync group.
                 group_members=(
@@ -130,6 +139,13 @@ class FakeMusicAssistant:
         ] + list(self.extra_players)
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
+        if self.delay_range_ms is not None:
+            low, high = self.delay_range_ms
+            if not low <= milliseconds <= high:
+                # Refused, not clamped — which is how the real one behaves.
+                raise ValueError(
+                    f"static_delay_ms must be in range {low}-{high}, got {milliseconds}"
+                )
         self.writes.append((player_id, milliseconds))
         self.speakers = [
             s.with_adjust(milliseconds) if s.player_id == player_id else s for s in self.speakers

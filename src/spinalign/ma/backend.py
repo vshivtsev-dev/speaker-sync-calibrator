@@ -55,6 +55,16 @@ class PlayerInfo:
     genuinely rules a speaker out.
     """
 
+    delay_range_ms: tuple[int, int] | None = None
+    """What the delay setting accepts on this player, as the server reports it.
+
+    Not assumed, because it is not the same everywhere. Music Assistant's own
+    ``sync_adjust`` is a symmetric ±500 ms, while a Sendspin player carries
+    ``static_delay_ms`` running 0–5000 — advance-only, so nothing can be
+    delayed and the alignment has to come forward to meet the fastest speaker
+    instead. Writing outside the range is refused by the server outright.
+    """
+
     config_keys: tuple[str, ...] = ()
     """Every config key the server reported for this player.
 

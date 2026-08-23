@@ -15,6 +15,43 @@ from dataclasses import dataclass
 SYNC_ADJUST_LIMIT_MS = 500
 
 
+def _bounds(measurement: "PlayerMeasurement", limit_ms: int) -> tuple[float, float]:
+    """The values this player's setting accepts."""
+    if measurement.delay_range_ms is None:
+        return float(-limit_ms), float(limit_ms)
+    low, high = measurement.delay_range_ms
+    return float(low), float(high)
+
+
+def _reachable(own: float, bounds: tuple[float, float], sign: int) -> tuple[float, float]:
+    """The arrival times this speaker can be moved to."""
+    low, high = bounds
+    ends = (own + sign * low, own + sign * high)
+    return min(ends), max(ends)
+
+
+def _pick_target(
+    slowest: float, fastest: float, reach_low: float, reach_high: float
+) -> tuple[float, str]:
+    """Choose an arrival time to aim every speaker at, and name the choice."""
+    if reach_low > reach_high:
+        # No single arrival time is within everyone's reach. Aim at the middle
+        # and let the per-speaker clamp report who could not make it.
+        return (slowest + fastest) / 2.0, "centered"
+
+    for candidate, strategy in (
+        (slowest, "align_to_slowest"),
+        ((slowest + fastest) / 2.0, "centered"),
+    ):
+        if reach_low <= candidate <= reach_high:
+            return candidate, strategy
+
+    # Neither preference is reachable, which is what an advance-only setting
+    # looks like: nothing can be delayed, so everyone comes forward instead.
+    target = min(max(slowest, reach_low), reach_high)
+    return target, "align_to_fastest" if target <= fastest else "limited"
+
+
 @dataclass(frozen=True)
 class PlayerMeasurement:
     """What the acoustic pass learned about one speaker."""
@@ -29,6 +66,16 @@ class PlayerMeasurement:
 
     spread_ms: float = 0.0
     """Stability of the reading across repeated chirps."""
+
+    delay_range_ms: tuple[int, int] | None = None
+    """What this player's delay setting actually accepts, as the server says.
+
+    Not every server offers the symmetric ±500 ms that Music Assistant's own
+    ``sync_adjust`` has. A Sendspin player carries ``static_delay_ms``, which
+    runs 0–5000: it can only ever advance a player, never delay one, so the
+    alignment has to be aimed somewhere every speaker can actually reach.
+    ``None`` falls back to the symmetric default.
+    """
 
 
 @dataclass(frozen=True)
@@ -87,14 +134,23 @@ def solve(
     :mod:`spinalign.calibration.validate` rather than assumed, so a convention
     change upstream turns into a flipped flag instead of a silent regression.
 
-    Two targets are tried, in order of preference:
+    The target arrival time is whatever every speaker can actually reach. Each
+    speaker's setting has its own accepted range, which the server reports, and
+    that range plus ``sign`` is what says where that speaker can land. The
+    intersection of those windows is the set of workable targets, and the
+    preference inside it is:
 
-    * **align to the slowest speaker** — every correction is a delay, which is
-      always physically achievable, at the cost of needing the full spread of
-      headroom;
+    * **align to the slowest speaker** — every correction is then a delay,
+      which asks nothing of the setting beyond headroom;
     * **centre on the midpoint** — halves the headroom each speaker needs and
       so covers twice the spread, at the cost of asking some players to run
-      early.
+      early;
+    * otherwise the nearest reachable point, which on an advance-only setting
+      like Sendspin's ``static_delay_ms`` means aligning to the *fastest*
+      speaker and pulling the rest forward to meet it.
+
+    When the windows do not overlap at all, no target aligns everyone; the
+    midpoint is used and the speakers that cannot reach it are marked clamped.
     """
     if sign not in (1, -1):
         raise ValueError(f"sign must be 1 or -1, got {sign}")
@@ -107,16 +163,21 @@ def solve(
     slowest, fastest = max(values), min(values)
     spread_before = slowest - fastest
 
-    if spread_before <= limit_ms:
-        target, strategy = slowest, "align_to_slowest"
-    else:
-        target, strategy = (slowest + fastest) / 2.0, "centered"
+    windows = {
+        m.player_id: _reachable(intrinsic[m.player_id], _bounds(m, limit_ms), sign)
+        for m in measurements
+    }
+    reach_low = max(low for low, _ in windows.values())
+    reach_high = min(high for _, high in windows.values())
+
+    target, strategy = _pick_target(slowest, fastest, reach_low, reach_high)
 
     corrections = []
     for measurement in measurements:
         own = intrinsic[measurement.player_id]
+        low, high = _bounds(measurement, limit_ms)
         wanted = sign * (target - own)
-        applied = max(-limit_ms, min(limit_ms, int(round(wanted))))
+        applied = int(round(max(low, min(high, wanted))))
         corrections.append(
             PlayerCorrection(
                 player_id=measurement.player_id,
@@ -127,7 +188,7 @@ def solve(
                 target_adjust_ms=applied,
                 # What the speaker's arrival becomes, versus where we aimed.
                 residual_error_ms=(own + sign * applied) - target,
-                clamped=abs(wanted) > limit_ms,
+                clamped=not low - 0.5 <= wanted <= high + 0.5,
                 spread_ms=measurement.spread_ms,
             )
         )

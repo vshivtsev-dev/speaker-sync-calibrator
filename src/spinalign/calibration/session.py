@@ -389,6 +389,7 @@ def build_measurements(
             measured_ms=reading.latency_ms,
             current_adjust_ms=by_id[player_id].sync_adjust_ms if player_id in by_id else 0,
             spread_ms=reading.spread_ms,
+            delay_range_ms=by_id[player_id].delay_range_ms if player_id in by_id else None,
         )
         for player_id, reading in pass_.analysis.readings.items()
     ]
