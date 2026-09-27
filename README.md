@@ -296,8 +296,8 @@ a Music Assistant token:
   (`SPEAKER_SYNC_TRUSTED_PROXY`); the optional direct port still requires it.
 
 The add-on lives in `addon/` and installs the package from this
-repository's archive at the ref named in `addon/build.yaml`. Its own
-documentation is `addon/DOCS.md`.
+repository's archive at the ref named by `SPEAKER_SYNC_REF` in
+`addon/Dockerfile`. Its own documentation is `addon/DOCS.md`.
 
 ## Status
 
