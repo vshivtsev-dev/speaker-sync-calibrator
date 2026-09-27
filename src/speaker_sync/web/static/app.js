@@ -29,6 +29,7 @@ const STRINGS = {
     popout_text: 'The microphone may be unavailable inside the Home Assistant panel —',
     popout_link: 'open Speaker Sync Calibrator in a separate tab',
     speakers: 'Speakers',
+    refresh: 'Refresh',
     loading: 'Loading…',
     switch_note: 'A speaker switched off is left alone: it is not measured, not grouped'
       + ' and its delay is not changed. Useful for a subwoofer, a speaker in another'
@@ -63,6 +64,7 @@ const STRINGS = {
       + ' the first speaker plays twice, and the repeat measures the phone clock\'s drift.'
       + ` Measurement with verification ≈ ${v.seconds} s.`,
     settings_found: 'delay setting not found — show what the player has',
+    settings_all: 'player settings',
     ms: 'ms',
     ready_pill: 'ready',
     not_taking_part: 'not taking part',
@@ -107,6 +109,7 @@ const STRINGS = {
     popout_text: 'Микрофон внутри панели Home Assistant может быть недоступен —',
     popout_link: 'откройте Speaker Sync Calibrator в отдельной вкладке',
     speakers: 'Колонки',
+    refresh: 'Обновить',
     loading: 'Загрузка…',
     switch_note: 'Выключенную колонку калибровка не трогает: её не замеряют, в группу не'
       + ' берут и задержку ей не меняют. Пригодится для сабвуфера, колонки в другой'
@@ -141,6 +144,7 @@ const STRINGS = {
       + ' первая колонка звучит дважды, по повтору измеряется уход часов телефона.'
       + ` Замер с проверкой ≈ ${v.seconds} с.`,
     settings_found: 'настройка задержки не найдена — показать настройки плеера',
+    settings_all: 'настройки плеера',
     ms: 'мс',
     ready_pill: 'готова',
     not_taking_part: 'не участвует',
@@ -225,6 +229,7 @@ let runnable = false;  // enough speakers are switched on to run one
 // to switch it back on again.
 function refreshControls() {
   el('run').disabled = busy || !runnable;
+  el('refresh').disabled = busy;
   document.querySelectorAll('#players .toggle').forEach((b) => { b.disabled = busy; });
 }
 
@@ -424,16 +429,22 @@ async function refreshPlayers() {
   // Only while the field is not being edited, or typing would fight the poll.
   if (document.activeElement !== chirps) chirps.value = data.chirps_per_round;
 
+  // Re-rendering would fold every open settings list back up.
+  const unfolded = new Set(
+    [...document.querySelectorAll('#players details[open]')].map((d) => d.dataset.player),
+  );
+
   const rows = players.map((p) => `
     <tr class="${p.enabled ? '' : 'off'}">
       <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
-        // Only when the delay setting itself was not found — the one case the
-        // names help with, since they turn a mystery into a one-line fix. A
-        // speaker switched off or offline already says why in its pill, and a
-        // wall of setting names there is just noise. Folded away regardless.
-        p.enabled && p.available && !p.sync_adjust_key && p.config_keys && p.config_keys.length
-          ? `<details class="keys"><summary>${t('settings_found')}</summary>${
-              escapeHtml(p.config_keys.join(', '))}</details>`
+        // Always folded away: the names are for diagnosis, not for reading.
+        // The summary says so when they matter — the delay setting was not
+        // found, and seeing what is there turns that into a one-line fix.
+        p.config_keys && p.config_keys.length
+          ? `<details class="keys" data-player="${escapeAttr(p.player_id)}"${
+              unfolded.has(p.player_id) ? ' open' : ''}><summary>${t(
+              p.enabled && p.available && !p.sync_adjust_key ? 'settings_found' : 'settings_all'
+            )}</summary>${escapeHtml(p.config_keys.join(', '))}</details>`
           : ''
       }${
         // A failed read is a different fault from an absent setting, and the
@@ -652,6 +663,7 @@ async function start(kind) {
 el('chirps').addEventListener('input', describeRoundLength);
 el('run').addEventListener('click', () => start('calibrate'));
 el('save').addEventListener('click', saveProfile);
+el('refresh').addEventListener('click', refreshPlayers);
 
 // Delegated so the list can be re-rendered without rebinding every row.
 el('players').addEventListener('click', (event) => {
