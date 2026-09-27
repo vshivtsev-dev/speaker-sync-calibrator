@@ -2,8 +2,7 @@ configuration:
   language:
     name: Язык
     description: >-
-      Язык интерфейса и сообщений. «auto» — по языку браузера, если он не
-      русский, то английский.
+      Язык интерфейса и сообщений. «auto» — как в браузере.
   ma_url:
     name: Адрес Music Assistant
     description: >-

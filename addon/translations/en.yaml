@@ -2,8 +2,8 @@ configuration:
   language:
     name: Language
     description: >-
-      Language of the interface and its messages. "auto" follows each
-      browser's language and falls back to English.
+      Language of the interface and its messages. "auto" follows the
+      browser.
   ma_url:
     name: Music Assistant URL
     description: >-
