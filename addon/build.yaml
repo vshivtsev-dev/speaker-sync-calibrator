@@ -1,7 +1,0 @@
-build_from:
-  aarch64: python:3.12-slim-bookworm
-  amd64: python:3.12-slim-bookworm
-args:
-  # Which revision of this repository the add-on installs. A branch, a tag or
-  # a commit — anything GitHub serves an archive for.
-  SPEAKER_SYNC_REF: main

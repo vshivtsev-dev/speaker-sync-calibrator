@@ -1,5 +1,8 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# Named here rather than in build.yaml: the Supervisor rejects a bare
+# "python:…" there and silently falls back to its own Alpine base, which has no
+# Python at all. The official image is multi-arch, so --platform picks amd64 or
+# aarch64 by itself.
+FROM python:3.12-slim-bookworm
 
 # The Supervisor builds with this directory as the context, so the package is
 # not next to the Dockerfile the way it is for the standalone image. It is
