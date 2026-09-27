@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.5
+- Fix blank panel after an update when a CDN (e.g. Cloudflare) cached the old script.
+
 ## 0.1.4
 - Refresh button for the speaker list; player settings folded away.
 - Updates now really rebuild with the new code (Docker cache fix).

@@ -720,3 +720,21 @@ async def test_the_page_names_the_setting_to_fill_in():
     assert "401 unauthorized" in text
     assert "«Токен Music Assistant»" in text
     assert "Конфигурация" in text
+
+
+async def test_the_script_address_changes_with_its_content(state):
+    """In the path, not the query: a CDN may ignore the query and hand an
+    updated page the previous version's script, which leaves it blank."""
+    async with await client_for(create_app(state)) as client:
+        page_response = await client.get("/")
+        page = await page_response.text()
+        (src,) = [line.split('"')[1] for line in page.splitlines() if "<script src=" in line]
+        script = await client.get("/" + src)
+
+        assert page_response.headers["Cache-Control"] == "no-cache"
+        assert src.startswith("assets/") and src.endswith("/app.js") and "?" not in src
+        assert script.status == 200
+        assert "immutable" in script.headers["Cache-Control"]
+        assert "refreshPlayers" in await script.text()
+        stale = await client.get("/assets/000000000000/app.js")
+        assert stale.headers["Cache-Control"] == "no-store"
