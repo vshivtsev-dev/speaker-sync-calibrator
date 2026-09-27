@@ -30,6 +30,7 @@ class FakeProtocol:
     protocol_domain: str
     name: str = ""
     available: bool = True
+    output_protocol_id: str = ""
 
 
 @dataclass
@@ -224,6 +225,48 @@ async def test_the_active_protocol_wins_over_what_is_merely_available():
 
     assert player.transport == "airplay"
     assert not player.is_sendspin
+
+
+async def test_the_active_protocol_is_resolved_from_its_id():
+    """The real model names the active protocol by id — "native" or the
+    protocol player's id — not by domain. Read as a domain, a Sendspin player
+    called keel-jack was shown as transport "keel-jack" and as not Sendspin."""
+    client = FakeClient(
+        [
+            FakePlayer(
+                "keel-jack",
+                "Edifier R1280T",
+                provider="sendspin",
+                output_protocols=(
+                    FakeProtocol("sendspin", name="Sendspin", output_protocol_id="native"),
+                ),
+                active_output_protocol="native",
+            ),
+            FakePlayer(
+                "tv",
+                "Телевизор",
+                provider="universal_player",
+                output_protocols=(
+                    FakeProtocol("airplay", output_protocol_id="airplay-tv"),
+                    FakeProtocol("sendspin", output_protocol_id="keel-jack"),
+                ),
+                active_output_protocol="keel-jack",
+            ),
+            FakePlayer(
+                "chromecast",
+                "Кухня",
+                provider="chromecast",
+                active_output_protocol="native",
+            ),
+        ],
+        entries={pid: [delay_entry()] for pid in ("keel-jack", "tv", "chromecast")},
+    )
+
+    jack, tv, cast = await MusicAssistantBackend(client).list_players()
+
+    assert jack.transport == "sendspin" and jack.is_sendspin
+    assert tv.transport == "sendspin" and tv.is_sendspin
+    assert cast.transport == "chromecast" and not cast.is_sendspin
 
 
 # ---------------------------------------------------------- the delay setting

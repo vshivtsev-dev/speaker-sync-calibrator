@@ -205,9 +205,7 @@ class MusicAssistantBackend:
                         _protocol_domain(p)
                         for p in getattr(player, "output_protocols", ()) or ()
                     ),
-                    active_output_protocol=_protocol_domain(
-                        getattr(player, "active_output_protocol", None)
-                    ),
+                    active_output_protocol=_active_protocol_domain(player),
                     group_members=tuple(getattr(player, "group_members", ()) or ()),
                     can_group_with=tuple(getattr(player, "can_group_with", ()) or ()),
                     sync_adjust_ms=_current_value(delay),
@@ -398,6 +396,26 @@ def _current_value(entry) -> int:
         return 0
     value = getattr(entry, "value", None)
     return _as_int(value if value is not None else getattr(entry, "default_value", None))
+
+
+def _active_protocol_domain(player) -> str | None:
+    """The domain of the protocol carrying the audio right now.
+
+    ``active_output_protocol`` is not a protocol but an id: ``"native"`` or the
+    player_id of the protocol player. Read as a domain, a Sendspin speaker
+    whose player_id is ``keel-jack`` came out as transport ``keel-jack`` and
+    was reported as not Sendspin. The id is resolved through
+    ``output_protocols``; ``"native"`` means the player's own provider.
+    """
+    active = getattr(player, "active_output_protocol", None)
+    if active is None or not isinstance(active, str):
+        return _protocol_domain(active)
+    for protocol in getattr(player, "output_protocols", ()) or ():
+        if getattr(protocol, "output_protocol_id", None) == active:
+            return _protocol_domain(protocol)
+    if active == "native":
+        return player.provider or None
+    return active
 
 
 def _protocol_domain(protocol) -> str | None:
