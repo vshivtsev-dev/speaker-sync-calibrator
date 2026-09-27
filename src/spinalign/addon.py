@@ -18,6 +18,7 @@ import logging
 import os
 import secrets
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -43,6 +44,10 @@ MUSIC_ASSISTANT_SLUGS = (
     "d5369777_music_assistant_dev",
 )
 MUSIC_ASSISTANT_PORT = 8095
+
+RETRY_SECONDS = 15
+"""Pause before trying Music Assistant again. At boot the two add-ons start
+in no particular order, so a first refusal is expected rather than fatal."""
 
 AddonInfo = Callable[[str], "dict | None"]
 """Look up an add-on by slug; ``None`` when it is not installed."""
@@ -162,7 +167,12 @@ def main() -> int:
 
     from spinalign.cli import main as cli_main
 
-    return cli_main(["serve"])
+    # ``serve`` only returns when it could not start — in practice because
+    # Music Assistant is not answering yet.
+    while True:
+        cli_main(["serve"])
+        print(f"Retrying in {RETRY_SECONDS}s …", file=sys.stderr)
+        time.sleep(RETRY_SECONDS)
 
 
 if __name__ == "__main__":
