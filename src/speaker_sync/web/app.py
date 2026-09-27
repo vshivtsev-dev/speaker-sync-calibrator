@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import secrets
@@ -392,6 +393,10 @@ def create_app(state: AppState) -> web.Application:
     app[STATE] = state
 
     page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    # Named after its content, so an update is never answered from the
+    # browser's cache with the previous version's script.
+    script = hashlib.sha256((STATIC_DIR / "app.js").read_bytes()).hexdigest()[:12]
+    page = page.replace('src="static/app.js"', f'src="static/app.js?v={script}"', 1)
 
     async def index(_: web.Request) -> web.Response:
         # The page's lang attribute is how the client learns which language

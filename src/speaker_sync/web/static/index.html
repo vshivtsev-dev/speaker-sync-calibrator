@@ -44,6 +44,8 @@
 
   h1 { font-size: 20px; margin: 0 0 2px; }
   h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .cardhead h2 { margin-bottom: 10px; }
   .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
   .sub.bad { color: var(--bad); }
   .keys { color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
@@ -182,7 +184,10 @@
   </p>
 
   <div class="card">
-    <h2 data-i18n="speakers"></h2>
+    <div class="cardhead">
+      <h2 data-i18n="speakers"></h2>
+      <button id="refresh" class="toggle" data-i18n="refresh"></button>
+    </div>
     <table id="players"><tbody><tr><td colspan="3" data-i18n="loading"></td></tr></tbody></table>
     <p class="note" data-i18n="switch_note"></p>
   </div>

@@ -1,5 +1,7 @@
 name: Speaker Sync Calibrator
-version: "0.1.3"
+# Each version bump gets a line in CHANGELOG.md — Home Assistant shows it
+# in the update dialog.
+version: "0.1.4"
 slug: speaker_sync_calibrator
 description: Acoustic latency calibration for Music Assistant multi-room speakers
 url: https://github.com/vshivtsev-dev/speaker-sync-calibrator

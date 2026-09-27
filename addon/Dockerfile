@@ -10,12 +10,18 @@ FROM python:3.12-slim-bookworm
 # numpy and scipy come as wheels, so no compiler either.
 ARG SPEAKER_SYNC_REPO=https://github.com/vshivtsev-dev/speaker-sync-calibrator
 ARG SPEAKER_SYNC_REF=main
+# Passed by the Supervisor: the add-on version from config.yaml. Named in the
+# RUN line below so every new version rebuilds that layer. Without it the line
+# reads the same from one version to the next, Docker reuses the cached layer,
+# and an "updated" add-on quietly keeps the old code.
+ARG BUILD_VERSION=dev
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN pip install --no-cache-dir \
+RUN echo "Speaker Sync Calibrator ${BUILD_VERSION} from ${SPEAKER_SYNC_REF}" \
+    && pip install --no-cache-dir \
     "speaker-sync[ma] @ ${SPEAKER_SYNC_REPO}/archive/${SPEAKER_SYNC_REF}.tar.gz"
 
 # /data is the add-on's persistent directory: options.json from the
