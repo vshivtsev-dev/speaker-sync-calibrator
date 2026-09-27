@@ -381,6 +381,43 @@ async def test_the_active_protocols_delay_is_the_one_written():
     assert client.config.saved == [("jack", {f"jack-sendspin{SPLIT}sendspin_static_delay": 120})]
 
 
+@pytest.mark.parametrize(
+    ("provider", "sign"),
+    [("airplay", 1), ("squeezelite--x7Kp2mQa", -1), ("chromecast", None)],
+)
+async def test_sync_adjust_runs_the_way_its_provider_uses_it(provider, sign):
+    """AirPlay adds it to the start instant; Squeezelite subtracts it from the
+    elapsed time and then skips the player ahead."""
+    client = FakeClient(
+        [FakePlayer("p", "P", provider=provider)],
+        entries={"p": [FakeEntry("sync_adjust", range=(-500, 500))]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.delay_sign == sign
+
+
+async def test_a_linked_protocols_sync_adjust_takes_that_protocols_direction():
+    protocol = types.SimpleNamespace(output_protocol_id="jack-airplay", protocol_domain="airplay")
+    client = FakeClient(
+        [
+            FakePlayer(
+                "jack",
+                "opi5p jack",
+                output_protocols=(protocol,),
+                active_output_protocol="jack-airplay",
+            )
+        ],
+        entries={"jack": [FakeEntry(f"jack-airplay{SPLIT}sync_adjust", range=(-500, 500))]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.delay_protocol == "airplay"
+    assert player.delay_sign == 1
+
+
 async def test_unrelated_integer_settings_are_not_mistaken_for_the_delay():
     """Shape matching has to be narrow enough not to grab the volume."""
     client = FakeClient(

@@ -36,7 +36,6 @@ const STRINGS = {
     idle: 'Put the phone where you listen and press “Calibrate”.',
     chirps_label: 'Chirps per speaker',
     run: 'Calibrate',
-    probe: 'Check the sync_adjust direction',
     run_note: 'It will be quiet at first, then the speakers take turns playing short'
       + ' chirps. Keep the phone still and the room quiet. Whatever was playing stops:'
       + ' the track is queued as ordinary playback — only that way do mute and grouping,'
@@ -115,7 +114,6 @@ const STRINGS = {
     idle: 'Положите телефон туда, где слушаете, и нажмите «Калибровать».',
     chirps_label: 'Свистов на колонку',
     run: 'Калибровать',
-    probe: 'Проверить знак sync_adjust',
     run_note: 'Во время замера будет тихо, потом колонки по очереди издадут короткие'
       + ' свисты. Не двигайте телефон и старайтесь не шуметь. То, что играло,'
       + ' остановится: трек ставится в очередь как обычное воспроизведение — только так'
@@ -227,7 +225,6 @@ let runnable = false;  // enough speakers are switched on to run one
 // to switch it back on again.
 function refreshControls() {
   el('run').disabled = busy || !runnable;
-  el('probe').disabled = busy || !runnable;
   document.querySelectorAll('#players .toggle').forEach((b) => { b.disabled = busy; });
 }
 
@@ -420,7 +417,6 @@ async function refreshPlayers() {
   const data = await response.json();
   players = data.players;
   session = data;
-  el('probe').hidden = !data.sign_needed;
 
   const chirps = el('chirps');
   chirps.min = data.chirps_range[0];
@@ -655,7 +651,6 @@ async function start(kind) {
 
 el('chirps').addEventListener('input', describeRoundLength);
 el('run').addEventListener('click', () => start('calibrate'));
-el('probe').addEventListener('click', () => start('probe_sign'));
 el('save').addEventListener('click', saveProfile);
 
 // Delegated so the list can be re-rendered without rebinding every row.

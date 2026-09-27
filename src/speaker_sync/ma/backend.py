@@ -28,14 +28,26 @@ SENDSPIN_DELAY_KEY = "sendspin_static_delay"
 # key on the player writes it through to the protocol player.
 PROTOCOL_KEY_SPLITTER = "||protocol||"
 
-KNOWN_DELAY_SIGNS = {SENDSPIN_DELAY_KEY: -1}
-"""Delay settings whose direction is fixed by specification, not by probing.
+KNOWN_DELAY_SIGNS: dict[tuple[str, str | None], int] = {
+    (SENDSPIN_DELAY_KEY, None): -1,
+    (SYNC_ADJUST_KEY, "airplay"): 1,
+    (SYNC_ADJUST_KEY, "squeezelite"): -1,
+}
+"""What a positive value does, by setting and, where it matters, protocol.
 
-Sendspin clients subtract ``output_delay_ms`` from every timestamp before
-scheduling playback, so a larger value plays *earlier*, and the range is
-0–5000 with negatives forbidden. ``sync_adjust`` is left to the probe: its
-direction is not specified, and Music Assistant's providers handle it each
-their own way.
+``1`` delays the speaker, ``-1`` advances it. Read off the specification and
+Music Assistant's own source rather than measured:
+
+* Sendspin clients subtract ``output_delay_ms`` from every timestamp before
+  scheduling playback, so a larger value plays earlier (0–5000, whatever the
+  protocol carrying it).
+* ``sync_adjust`` means opposite things to the two providers that use it.
+  AirPlay adds it to the commanded start instant, so it delays. Squeezelite
+  subtracts it from the elapsed time it reports, which makes the player look
+  behind, and the resync then skips it ahead — it advances.
+
+Anything else is left to the calibration's verification pass, which reads the
+direction off the movement it measures and rewrites if it was wrong.
 """
 
 
@@ -44,9 +56,12 @@ def base_key(key: str) -> str:
     return key.split(PROTOCOL_KEY_SPLITTER, 1)[-1]
 
 
-def known_delay_sign(key: str | None) -> int | None:
-    """``-1`` or ``1`` when the key's direction is specified, else ``None``."""
-    return None if key is None else KNOWN_DELAY_SIGNS.get(base_key(key))
+def known_delay_sign(key: str | None, protocol: str | None = None) -> int | None:
+    """``-1`` or ``1`` when the key's direction is known, else ``None``."""
+    if key is None:
+        return None
+    name = base_key(key)
+    return KNOWN_DELAY_SIGNS.get((name, None), KNOWN_DELAY_SIGNS.get((name, protocol)))
 
 # Things that are an aggregate of other players rather than a speaker: no
 # output of their own, nothing to measure, nothing to correct.
@@ -84,6 +99,13 @@ class PlayerInfo:
     between releases and this client will routinely be older than the server.
     ``None`` means no such setting was found, which is the one thing that
     genuinely rules a speaker out.
+    """
+
+    delay_protocol: str | None = None
+    """The provider domain the delay setting belongs to, e.g. ``airplay``.
+
+    The same ``sync_adjust`` runs opposite ways under AirPlay and Squeezelite,
+    so the key alone does not say which way a correction moves the speaker.
     """
 
     delay_range_ms: tuple[int, int] | None = None
@@ -154,7 +176,7 @@ class PlayerInfo:
         ``1`` delays it, ``-1`` advances it, ``None`` means only a measurement
         can tell.
         """
-        return known_delay_sign(self.sync_adjust_key)
+        return known_delay_sign(self.sync_adjust_key, self.delay_protocol)
 
     @property
     def supports_sync_adjust(self) -> bool:

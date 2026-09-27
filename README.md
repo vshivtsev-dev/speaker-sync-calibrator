@@ -57,10 +57,10 @@ Three details carry most of the accuracy:
   at the other as a phantom arrival. The correlation is zero-padded so the
   wraparound lands outside the data.
 
-The sign convention of `sync_adjust` is **probed, not assumed**: the app
-applies a known offset to one speaker, re-measures, and sees which way it
-moved. After corrections are written it measures again, so the result is
-demonstrated rather than asserted.
+Which way each delay setting runs is taken from the specification where
+there is one, and **measured, not assumed** where there is not. After
+corrections are written the app measures again, so the result is demonstrated
+rather than asserted.
 
 ## Accuracy
 
@@ -179,10 +179,18 @@ forward to meet it. The solver takes each speaker's own accepted range, works
 out which arrival times are within everybody's reach, and picks from that —
 which also means a group mixing both kinds of setting still lands together.
 
-### Which way `sync_adjust` runs
+### Which way the delay runs
 
-Music Assistant documents `sync_adjust` as a millisecond correction but not
-which direction is which, and servers differ. Getting it backwards is the worst
+Known per speaker, from its setting and the protocol carrying it:
+
+| setting | protocol | a larger value |
+|---|---|---|
+| `sendspin_static_delay` (Sendspin's `output_delay_ms`, 0–5000) | any | plays **earlier** |
+| `sync_adjust` | AirPlay | plays later (added to the start instant) |
+| `sync_adjust` | Squeezelite | plays **earlier** (subtracted from reported elapsed time, then skipped ahead) |
+
+For anything else Music Assistant documents the setting as a millisecond
+correction but not which direction is which. Getting it backwards is the worst
 outcome available: every correction doubles the error rather than removing it,
 and the run still writes its numbers into Music Assistant. On live hardware
 229 ms of spread became 460.
@@ -192,10 +200,6 @@ went in and the arrival times moved, so comparing two speakers — which cancels
 each pass's arbitrary origin — says which way the setting runs. When it
 contradicts what the run assumed, the corrections are re-applied the other way
 round and verified again, and the convention is remembered for next time.
-
-The separate probe under the Calibrate button does the same thing deliberately,
-at the cost of two measurement passes, and is worth running once if you would
-rather establish it before anything is written.
 
 ### How the track is played
 

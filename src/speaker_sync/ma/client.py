@@ -235,6 +235,7 @@ class MusicAssistantBackend:
                     can_group_with=tuple(getattr(player, "can_group_with", ()) or ()),
                     sync_adjust_ms=_current_value(delay),
                     sync_adjust_key=delay.key if delay is not None else None,
+                    delay_protocol=_delay_protocol(player, delay),
                     delay_range_ms=_delay_range(delay),
                     config_keys=tuple(entry.key for entry in entries),
                     config_error=config_error,
@@ -440,6 +441,24 @@ def _current_value(entry) -> int:
         return 0
     value = getattr(entry, "value", None)
     return _as_int(value if value is not None else getattr(entry, "default_value", None))
+
+
+def _delay_protocol(player, entry) -> str | None:
+    """The provider domain a delay entry belongs to.
+
+    A prefixed key belongs to the linked protocol player of that id; an
+    unprefixed one to the player's own provider, whose instance id is its
+    domain, or ``<domain>--<suffix>`` for a second instance.
+    """
+    if entry is None:
+        return None
+    if PROTOCOL_KEY_SPLITTER in entry.key:
+        protocol_id = entry.key.split(PROTOCOL_KEY_SPLITTER, 1)[0]
+        for protocol in getattr(player, "output_protocols", ()) or ():
+            if getattr(protocol, "output_protocol_id", None) == protocol_id:
+                return _protocol_domain(protocol)
+        return None
+    return (player.provider or "").split("--", 1)[0] or None
 
 
 def _active_protocol_domain(player) -> str | None:
