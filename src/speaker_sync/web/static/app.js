@@ -63,7 +63,7 @@ const STRINGS = {
     total: (v) => ` ${v.total} ${plural(v.total, ['chirp', 'chirps'])} in all:`
       + ' the first speaker plays twice, and the repeat measures the phone clock\'s drift.'
       + ` Measurement with verification ≈ ${v.seconds} s.`,
-    settings_found: 'settings: ',
+    settings_found: 'delay setting not found — show what the player has',
     ms: 'ms',
     ready_pill: 'ready',
     not_taking_part: 'not taking part',
@@ -142,7 +142,7 @@ const STRINGS = {
     total: (v) => ` Всего ${v.total} ${plural(v.total, ['свист', 'свиста', 'свистов'])}:`
       + ' первая колонка звучит дважды, по повтору измеряется уход часов телефона.'
       + ` Замер с проверкой ≈ ${v.seconds} с.`,
-    settings_found: 'настройки: ',
+    settings_found: 'настройка задержки не найдена — показать настройки плеера',
     ms: 'мс',
     ready_pill: 'готова',
     not_taking_part: 'не участвует',
@@ -430,10 +430,13 @@ async function refreshPlayers() {
   const rows = players.map((p) => `
     <tr class="${p.enabled ? '' : 'off'}">
       <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
-        // When the delay setting was not found, show what the server did
-        // report: seeing the real names turns a mystery into a one-line fix.
-        !p.calibratable && p.config_keys && p.config_keys.length
-          ? `<br><span class="sub">${t('settings_found')}${escapeHtml(p.config_keys.join(', '))}</span>`
+        // Only when the delay setting itself was not found — the one case the
+        // names help with, since they turn a mystery into a one-line fix. A
+        // speaker switched off or offline already says why in its pill, and a
+        // wall of setting names there is just noise. Folded away regardless.
+        p.enabled && p.available && !p.sync_adjust_key && p.config_keys && p.config_keys.length
+          ? `<details class="keys"><summary>${t('settings_found')}</summary>${
+              escapeHtml(p.config_keys.join(', '))}</details>`
           : ''
       }${
         // A failed read is a different fault from an absent setting, and the
@@ -442,7 +445,7 @@ async function refreshPlayers() {
           ? `<br><span class="sub bad">${escapeHtml(p.config_error)}</span>`
           : ''
       }</td>
-      <td class="num">${p.calibratable
+      <td class="num">${p.sync_adjust_key
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} ${t('ms')}`
         : '—'}</td>
       <td>
