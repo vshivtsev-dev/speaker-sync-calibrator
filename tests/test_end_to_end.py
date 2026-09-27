@@ -255,6 +255,31 @@ async def test_a_sendspin_style_advance_only_setting_converges():
     assert dict(report.applied)["bt"] == pytest.approx(203, abs=2)
 
 
+async def test_sendspin_is_corrected_the_right_way_first_time():
+    """Its direction is in the protocol spec, so there is nothing to guess:
+    no rewrite the other way round, no second disruption of every speaker."""
+    speakers = [s.__class__(**{**s.__dict__, "sign": -1}) for s in mixed_speakers()]
+    server, recorder, clock = make_server(speakers, snr_db=30.0)
+    server.delay_range_ms = (0, 5000)
+    server.delay_key = "sendspin_static_delay"
+
+    report = await calibrate(server, recorder, sign=1, sleep=clock.sleep)
+
+    assert report.spread_after_ms is not None
+    assert report.spread_after_ms < 2.0
+    assert len(server.writes) == len(report.applied)
+    assert not any("advances a speaker" in problem for problem in report.problems)
+
+
+async def test_sendspin_needs_no_direction_probe():
+    server, recorder, clock = make_server(snr_db=30.0)
+    server.delay_key = "sendspin_static_delay"
+
+    with pytest.raises(ValueError, match="Sendspin"):
+        await determine_sign(server, recorder, sleep=clock.sleep)
+    assert server.writes == []
+
+
 async def test_an_inverted_server_is_recognised_and_corrected_within_the_run():
     """A server where positive sync_adjust advances rather than delays.
 

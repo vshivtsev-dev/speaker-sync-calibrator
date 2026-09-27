@@ -29,14 +29,28 @@ from dataclasses import dataclass
 from typing import Any
 
 from speaker_sync.i18n import say
-from speaker_sync.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
+from speaker_sync.ma.backend import (
+    PROTOCOL_KEY_SPLITTER,
+    SENDSPIN_DELAY_KEY,
+    SYNC_ADJUST_KEY,
+    PlayerInfo,
+    base_key,
+)
 
 logger = logging.getLogger("speaker_sync.ma")
 
 DEFAULT_CONNECT_TIMEOUT = 30.0
 
-# Names the delay setting has gone by, most likely first.
-DELAY_KEYS = (SYNC_ADJUST_KEY, "output_sync_adjust", "sync_delay", "delay_correction")
+# Names the delay setting goes by, most likely first: Music Assistant's own
+# (AirPlay, Squeezelite), Sendspin's, and earlier names. Matched with or
+# without a linked protocol's ``<id>||protocol||`` prefix.
+DELAY_KEYS = (
+    SYNC_ADJUST_KEY,
+    SENDSPIN_DELAY_KEY,
+    "output_sync_adjust",
+    "sync_delay",
+    "delay_correction",
+)
 
 # Fallback identification, for when it has been renamed again. A delay
 # correction is an integer setting, spans a few hundred milliseconds either
@@ -197,7 +211,7 @@ class MusicAssistantBackend:
         players = []
         for player in self._client.players.players:
             entries, config_error = await self._config_entries(player.player_id)
-            delay = find_delay_entry(entries)
+            delay = find_delay_entry(entries, getattr(player, "active_output_protocol", None))
             players.append(
                 PlayerInfo(
                     player_id=player.player_id,
@@ -221,6 +235,7 @@ class MusicAssistantBackend:
                     can_group_with=tuple(getattr(player, "can_group_with", ()) or ()),
                     sync_adjust_ms=_current_value(delay),
                     sync_adjust_key=delay.key if delay is not None else None,
+                    delay_protocol=_delay_protocol(player, delay),
                     delay_range_ms=_delay_range(delay),
                     config_keys=tuple(entry.key for entry in entries),
                     config_error=config_error,
@@ -253,16 +268,22 @@ class MusicAssistantBackend:
         seen = (ConfigEntryView.from_wire(item) for item in raw or ())
         return [entry for entry in seen if entry is not None], None
 
+    def _active_protocol(self, player_id: str) -> str | None:
+        try:
+            return getattr(self._client.players[player_id], "active_output_protocol", None)
+        except (KeyError, TypeError):
+            return None
+
     async def get_sync_adjust(self, player_id: str) -> int:
         entries, _ = await self._config_entries(player_id)
-        return _current_value(find_delay_entry(entries))
+        return _current_value(find_delay_entry(entries, self._active_protocol(player_id)))
 
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
         # Looked up rather than assumed: the key differs between Music
         # Assistant versions, and writing to a name this server does not have
         # would fail loudly at best and land somewhere unrelated at worst.
         entries, error = await self._config_entries(player_id)
-        delay = find_delay_entry(entries)
+        delay = find_delay_entry(entries, self._active_protocol(player_id))
         if delay is None:
             raise RuntimeError(
                 f"player {player_id} has no delay setting to write; "
@@ -340,7 +361,7 @@ def unreachable_track_message(url: str, error: Exception) -> str:
     )
 
 
-def find_delay_entry(entries):
+def find_delay_entry(entries, active_protocol: str | None = None):
     """Pick the config entry that carries this player's delay correction.
 
     By name first, since that is unambiguous when it matches. Falling back to
@@ -354,15 +375,28 @@ def find_delay_entry(entries):
     the setting with a known offset and reports "asked for +100 ms, nothing
     moved" — so a bad guess shows up as an inconclusive result rather than a
     quietly ruined calibration.
+
+    A player with several output protocols linked carries a delay setting for
+    each, under ``<protocol player id>||protocol||<key>``. Only the protocol
+    carrying the audio now (``active_output_protocol``: that id, or
+    ``"native"`` for the player's own unprefixed settings) affects what is
+    heard, so its entry comes first.
     """
     usable = [e for e in entries if not getattr(e, "hidden", False) and not getattr(e, "read_only", False)]
-    by_key = {e.key: e for e in usable}
+    active = None if active_protocol in (None, "native") else active_protocol
 
-    for name in DELAY_KEYS:
-        if name in by_key:
-            return by_key[name]
+    def rank(entry) -> tuple[bool, int]:
+        prefix = (
+            entry.key.split(PROTOCOL_KEY_SPLITTER, 1)[0]
+            if PROTOCOL_KEY_SPLITTER in entry.key
+            else None
+        )
+        name = base_key(entry.key)
+        by_name = DELAY_KEYS.index(name) if name in DELAY_KEYS else len(DELAY_KEYS)
+        return (prefix != active, by_name)
 
-    return next((e for e in usable if _looks_like_a_delay(e)), None)
+    candidates = [e for e in usable if base_key(e.key) in DELAY_KEYS or _looks_like_a_delay(e)]
+    return min(candidates, key=rank, default=None)
 
 
 def _looks_like_a_delay(entry) -> bool:
@@ -407,6 +441,24 @@ def _current_value(entry) -> int:
         return 0
     value = getattr(entry, "value", None)
     return _as_int(value if value is not None else getattr(entry, "default_value", None))
+
+
+def _delay_protocol(player, entry) -> str | None:
+    """The provider domain a delay entry belongs to.
+
+    A prefixed key belongs to the linked protocol player of that id; an
+    unprefixed one to the player's own provider, whose instance id is its
+    domain, or ``<domain>--<suffix>`` for a second instance.
+    """
+    if entry is None:
+        return None
+    if PROTOCOL_KEY_SPLITTER in entry.key:
+        protocol_id = entry.key.split(PROTOCOL_KEY_SPLITTER, 1)[0]
+        for protocol in getattr(player, "output_protocols", ()) or ():
+            if getattr(protocol, "output_protocol_id", None) == protocol_id:
+                return _protocol_domain(protocol)
+        return None
+    return (player.provider or "").split("--", 1)[0] or None
 
 
 def _active_protocol_domain(player) -> str | None:

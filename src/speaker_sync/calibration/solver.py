@@ -77,6 +77,13 @@ class PlayerMeasurement:
     ``None`` falls back to the symmetric default.
     """
 
+    sign: int | None = None
+    """This player's own direction, when its setting has a specified one.
+
+    Overrides the session-wide ``sign``: a Sendspin player advances with a
+    larger value whatever the probe found for some other kind of setting.
+    """
+
 
 @dataclass(frozen=True)
 class PlayerCorrection:
@@ -93,6 +100,9 @@ class PlayerCorrection:
 
     clamped: bool
     spread_ms: float = 0.0
+    sign: int | None = None
+    """The player's specified direction, or ``None`` when the session's
+    probed one was used for it."""
 
     @property
     def delta_ms(self) -> int:
@@ -157,14 +167,19 @@ def solve(
     if not measurements:
         return CalibrationSolution((), "empty", 0.0, 0.0)
 
+    signs = {m.player_id: m.sign or sign for m in measurements}
+
     # Back out the correction that was already in effect while measuring.
-    intrinsic = {m.player_id: m.measured_ms - sign * m.current_adjust_ms for m in measurements}
+    intrinsic = {
+        m.player_id: m.measured_ms - signs[m.player_id] * m.current_adjust_ms
+        for m in measurements
+    }
     values = list(intrinsic.values())
     slowest, fastest = max(values), min(values)
     spread_before = slowest - fastest
 
     windows = {
-        m.player_id: _reachable(intrinsic[m.player_id], _bounds(m, limit_ms), sign)
+        m.player_id: _reachable(intrinsic[m.player_id], _bounds(m, limit_ms), signs[m.player_id])
         for m in measurements
     }
     reach_low = max(low for low, _ in windows.values())
@@ -175,8 +190,9 @@ def solve(
     corrections = []
     for measurement in measurements:
         own = intrinsic[measurement.player_id]
+        own_sign = signs[measurement.player_id]
         low, high = _bounds(measurement, limit_ms)
-        wanted = sign * (target - own)
+        wanted = own_sign * (target - own)
         applied = int(round(max(low, min(high, wanted))))
         corrections.append(
             PlayerCorrection(
@@ -187,13 +203,14 @@ def solve(
                 current_adjust_ms=measurement.current_adjust_ms,
                 target_adjust_ms=applied,
                 # What the speaker's arrival becomes, versus where we aimed.
-                residual_error_ms=(own + sign * applied) - target,
+                residual_error_ms=(own + own_sign * applied) - target,
                 clamped=not low - 0.5 <= wanted <= high + 0.5,
                 spread_ms=measurement.spread_ms,
+                sign=measurement.sign,
             )
         )
 
-    landings = [c.intrinsic_ms + sign * c.target_adjust_ms for c in corrections]
+    landings = [c.intrinsic_ms + signs[c.player_id] * c.target_adjust_ms for c in corrections]
     return CalibrationSolution(
         corrections=tuple(corrections),
         strategy=strategy,

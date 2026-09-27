@@ -91,6 +91,10 @@ class FakeMusicAssistant:
     and the server rejects anything outside it rather than clamping.
     """
 
+    delay_key: str = "sync_adjust"
+    """The config key the delay goes by, which decides whether its direction
+    is specified (``sendspin_static_delay``) or has to be probed."""
+
     report_mute_state: bool = True
     report_group_state: bool = True
     """Whether this server tells anyone who is in the group.
@@ -126,6 +130,7 @@ class FakeMusicAssistant:
                 available=True,
                 muted=self._reported_mute(s.player_id) if self.report_mute_state else None,
                 sync_adjust_ms=s.sync_adjust_ms,
+                sync_adjust_key=self.delay_key,
                 delay_range_ms=self.delay_range_ms,
                 # Only the leader carries the membership, which is how Music
                 # Assistant reports a sync group.

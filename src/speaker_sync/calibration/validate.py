@@ -71,10 +71,23 @@ async def determine_sign(
             )
         )
 
-    reference = reference_id or players[0].player_id
-    probe = next((p for p in players if p.player_id != reference), None)
-    if probe is None:
-        raise ValueError("need a player other than the reference to probe")
+    unknown = [p for p in players if p.delay_sign is None]
+    if not unknown:
+        raise ValueError(
+            say(
+                en="nothing to check: every speaker's delay direction is fixed by its "
+                "protocol (Sendspin: a larger value plays earlier)",
+                ru="проверять нечего: направление задержки у всех колонок задано их "
+                "протоколом (Sendspin: чем больше значение, тем раньше звук)",
+            )
+        )
+
+    # The probe goes to a speaker whose direction is unknown; the reference
+    # is only a fixed point to measure against, of any kind.
+    probe = next((p for p in unknown if p.player_id != reference_id), unknown[0])
+    reference = reference_id if reference_id and reference_id != probe.player_id else next(
+        p.player_id for p in players if p.player_id != probe.player_id
+    )
 
     async def relative_latency() -> float | None:
         pass_ = await measure_once(
@@ -92,8 +105,9 @@ async def determine_sign(
         return readings[probe.player_id].latency_ms - readings[reference].latency_ms
 
     original = probe.sync_adjust_ms
-    # Probe in whichever direction has headroom inside the ±500 ms range.
-    delta = probe_ms if original + probe_ms <= SYNC_ADJUST_LIMIT_MS else -probe_ms
+    # Probe in whichever direction has headroom inside the setting's own range.
+    _, high = probe.delay_range_ms or (-SYNC_ADJUST_LIMIT_MS, SYNC_ADJUST_LIMIT_MS)
+    delta = probe_ms if original + probe_ms <= high else -probe_ms
 
     baseline = await relative_latency()
     if baseline is None:
