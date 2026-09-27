@@ -393,10 +393,15 @@ def create_app(state: AppState) -> web.Application:
     app[STATE] = state
 
     page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    # Named after its content, so an update is never answered from the
-    # browser's cache with the previous version's script.
-    script = hashlib.sha256((STATIC_DIR / "app.js").read_bytes()).hexdigest()[:12]
-    page = page.replace('src="static/app.js"', f'src="static/app.js?v={script}"', 1)
+    # The script's address carries its content hash in the *path*, so an
+    # update is never answered with the previous version's script from a
+    # cache — the browser's, or a CDN in front of Home Assistant such as
+    # Cloudflare, which caches .js by extension and may ignore query strings.
+    # An old script on the new page fails on its first missing element and
+    # leaves the page blank.
+    script_body = (STATIC_DIR / "app.js").read_bytes()
+    script = hashlib.sha256(script_body).hexdigest()[:12]
+    page = page.replace('src="static/app.js"', f'src="assets/{script}/app.js"', 1)
 
     async def index(_: web.Request) -> web.Response:
         # The page's lang attribute is how the client learns which language
@@ -405,6 +410,20 @@ def create_app(state: AppState) -> web.Application:
         return web.Response(
             text=page.replace('<html lang="en">', f'<html lang="{i18n.current()}">', 1),
             content_type="text/html",
+            # Always asked for again, so it always names the current script.
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    async def versioned_script(request: web.Request) -> web.Response:
+        # A stale page asking for an older hash still gets the current script,
+        # just not with permission to keep it under that name.
+        current = request.match_info["digest"] == script
+        return web.Response(
+            body=script_body,
+            content_type="application/javascript",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable" if current else "no-store"
+            },
         )
 
     async def healthz(_: web.Request) -> web.Response:
@@ -582,6 +601,7 @@ def create_app(state: AppState) -> web.Application:
 
     app.router.add_get("/", index)
     app.router.add_get("/healthz", healthz)
+    app.router.add_get("/assets/{digest}/app.js", versioned_script)
     app.router.add_get("/api/players", players)
     app.router.add_post("/api/players/{player_id}/enabled", player_enabled)
     app.router.add_get("/api/profiles", profiles_list)
