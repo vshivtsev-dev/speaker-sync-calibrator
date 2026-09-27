@@ -5,6 +5,199 @@
 
 const el = (id) => document.getElementById(id);
 
+// ------------------------------------------------------------------ language
+
+// The server resolves the language — the configured setting, or the browser's
+// own preference under "auto" — and states it on the page, so the text drawn
+// here and the messages the server sends always agree.
+const LANG = document.documentElement.lang === 'ru' ? 'ru' : 'en';
+
+// Russian needs three forms after a number; English two.
+function plural(count, forms) {
+  if (LANG !== 'ru') return count === 1 ? forms[0] : forms[1];
+  const mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return forms[2];
+  const mod10 = count % 10;
+  if (mod10 === 1) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4) return forms[1];
+  return forms[2];
+}
+
+const STRINGS = {
+  en: {
+    tagline: 'Align your speakers\' delays using your phone\'s microphone',
+    popout_text: 'The microphone may be unavailable inside the Home Assistant panel —',
+    popout_link: 'open Speaker Sync Calibrator in a separate tab',
+    speakers: 'Speakers',
+    loading: 'Loading…',
+    switch_note: 'A speaker switched off is left alone: it is not measured, not grouped'
+      + ' and its delay is not changed. Useful for a subwoofer, a speaker in another'
+      + ' room, or one you set by hand.',
+    idle: 'Put the phone where you listen and press “Calibrate”.',
+    chirps_label: 'Chirps per speaker',
+    run: 'Calibrate',
+    probe: 'Check the sync_adjust direction',
+    run_note: 'It will be quiet at first, then the speakers take turns playing short'
+      + ' chirps. Keep the phone still and the room quiet. Whatever was playing stops:'
+      + ' the track is queued as ordinary playback — only that way do mute and grouping,'
+      + ' which the measurement relies on, work.',
+    result: 'Result',
+    ms_spread: 'ms spread',
+    save_placeholder: 'Position name, e.g. “sofa”',
+    save: 'Save',
+    positions: 'Positions',
+    positions_note: 'A calibration belongs to the spot the phone was in: it also'
+      + ' compensates for sound travelling through the air. The sofa and the kitchen need'
+      + ' different corrections — a saved position is applied without a new measurement.',
+    disconnected: 'Connection lost, reconnecting…',
+    recording: 'Recording…',
+    computing: 'Computing…',
+    error: 'Error: ',
+    verifying: 'Verification pass…',
+    measuring: 'Measuring…',
+    playing: (v) => `Playing: ${v.name} (${v.round}/${v.rounds})`,
+    applying: (v) => `Applying corrections (${v.writes})…`,
+    guard_too_many: (v) => `The first ${v.guard} chirps of each round are discarded — the`
+      + ' switch-over masks them. More are needed.',
+    readings: (v) => `${v.n} ${plural(v.n, ['reading', 'readings'])} per speaker.`,
+    total: (v) => ` ${v.total} ${plural(v.total, ['chirp', 'chirps'])} in all:`
+      + ' the first speaker plays twice, and the repeat measures the phone clock\'s drift.'
+      + ` Measurement with verification ≈ ${v.seconds} s.`,
+    settings_found: 'settings: ',
+    ms: 'ms',
+    ready_pill: 'ready',
+    not_taking_part: 'not taking part',
+    switch_off: 'switch off',
+    switch_on: 'switch on',
+    speaker: 'Speaker',
+    no_players: 'Music Assistant reported no players',
+    need_two: 'At least two speakers need to be switched on. The reasons are in the list above.',
+    no_players_status: 'Music Assistant reported no players.',
+    ready_mixed: (v) => `Ready, ${v.n} ${plural(v.n, ['speaker', 'speakers'])}. Some of them`
+      + ' are not Sendspin — accuracy will depend on their own synchronisation.',
+    ready: (v) => `Ready, ${v.n} ${plural(v.n, ['speaker', 'speakers'])}.`
+      + ' Put the phone where you listen.',
+    toggle_failed: 'Did not switch: ',
+    was: 'was',
+    now: 'now',
+    residual: 'error',
+    limit: 'limit',
+    centered: 'The spread cannot be covered by a one-sided delay, so the corrections are'
+      + ' measured from the middle rather than from the slowest speaker.',
+    fastest: 'The delay setting on these speakers can only advance, not delay, so'
+      + ' everyone is pulled up to the fastest speaker.',
+    does_not_fit: 'The spread does not fit within ±500 ms — some speakers cannot be'
+      + ' fully aligned.',
+    verified: 'The verification pass confirmed the result.',
+    done: 'Done.',
+    done_with_notes: 'Finished with remarks.',
+    nothing_saved: 'Nothing saved yet',
+    n_speakers: (v) => `${v.n} ${plural(v.n, ['speaker', 'speakers'])}`,
+    apply: 'Apply',
+    delete: 'Delete',
+    applying_position: (v) => `Applying “${v.name}”…`,
+    applied_with_problems: (v) => `Applied (${v.n}), but: ${v.problems}`,
+    applied: (v) => `Position “${v.name}” applied, speakers changed: ${v.n}.`,
+    apply_failed: 'Could not apply: ',
+    saved: (v) => `Position “${v.name}” saved.`,
+    save_failed: 'Not saved: ',
+    no_microphone: 'No access to the microphone: ',
+  },
+  ru: {
+    tagline: 'Выравнивание задержек колонок по микрофону телефона',
+    popout_text: 'Микрофон внутри панели Home Assistant может быть недоступен —',
+    popout_link: 'откройте Speaker Sync Calibrator в отдельной вкладке',
+    speakers: 'Колонки',
+    loading: 'Загрузка…',
+    switch_note: 'Выключенную колонку калибровка не трогает: её не замеряют, в группу не'
+      + ' берут и задержку ей не меняют. Пригодится для сабвуфера, колонки в другой'
+      + ' комнате или той, что настроена вручную.',
+    idle: 'Положите телефон туда, где слушаете, и нажмите «Калибровать».',
+    chirps_label: 'Свистов на колонку',
+    run: 'Калибровать',
+    probe: 'Проверить знак sync_adjust',
+    run_note: 'Во время замера будет тихо, потом колонки по очереди издадут короткие'
+      + ' свисты. Не двигайте телефон и старайтесь не шуметь. То, что играло,'
+      + ' остановится: трек ставится в очередь как обычное воспроизведение — только так'
+      + ' работают мьют и группа, на которых держится замер.',
+    result: 'Результат',
+    ms_spread: 'мс разброса',
+    save_placeholder: 'Название позиции, например «диван»',
+    save: 'Сохранить',
+    positions: 'Позиции',
+    positions_note: 'Калибровка привязана к точке, где стоял телефон: компенсируется в том'
+      + ' числе путь звука по воздуху. Для дивана и кухни нужны разные поправки —'
+      + ' сохранённую позицию можно применить без нового замера.',
+    disconnected: 'Соединение потеряно, переподключаюсь…',
+    recording: 'Идёт запись…',
+    computing: 'Считаю…',
+    error: 'Ошибка: ',
+    verifying: 'Проверочный замер…',
+    measuring: 'Замер…',
+    playing: (v) => `Играет: ${v.name} (${v.round}/${v.rounds})`,
+    applying: (v) => `Применяю поправки (${v.writes})…`,
+    guard_too_many: (v) => `Первые ${v.guard} свиста в каждом круге отбрасываются — их`
+      + ' заглушает переключение. Нужно больше.',
+    readings: (v) => `${v.n} ${plural(v.n, ['отсчёт', 'отсчёта', 'отсчётов'])} на колонку.`,
+    total: (v) => ` Всего ${v.total} ${plural(v.total, ['свист', 'свиста', 'свистов'])}:`
+      + ' первая колонка звучит дважды, по повтору измеряется уход часов телефона.'
+      + ` Замер с проверкой ≈ ${v.seconds} с.`,
+    settings_found: 'настройки: ',
+    ms: 'мс',
+    ready_pill: 'готова',
+    not_taking_part: 'не участвует',
+    switch_off: 'выключить',
+    switch_on: 'включить',
+    speaker: 'Колонка',
+    no_players: 'Music Assistant не отдал ни одного плеера',
+    need_two: 'Нужно минимум две включённые колонки. Причины — в списке выше.',
+    no_players_status: 'Music Assistant не отдал ни одного плеера.',
+    ready_mixed: (v) => `Готово, колонок: ${v.n}. Часть из них не Sendspin — точность`
+      + ' будет зависеть от их собственной синхронизации.',
+    ready: (v) => `Готово, колонок: ${v.n}. Положите телефон туда, где слушаете.`,
+    toggle_failed: 'Не переключилось: ',
+    was: 'было',
+    now: 'стало',
+    residual: 'ошибка',
+    limit: 'предел',
+    centered: 'Разброс не покрывается односторонней задержкой, поэтому поправки отсчитаны'
+      + ' от середины, а не от самой медленной колонки.',
+    fastest: 'Настройка задержки на этих колонках умеет только торопить, но не задерживать,'
+      + ' поэтому все подтянуты к самой быстрой колонке.',
+    does_not_fit: 'Разброс не влезает в ±500 мс — часть колонок выровнять до конца нельзя.',
+    verified: 'Проверочный замер подтвердил результат.',
+    done: 'Готово.',
+    done_with_notes: 'Завершено с замечаниями.',
+    nothing_saved: 'Пока ничего не сохранено',
+    n_speakers: (v) => `${v.n} ${plural(v.n, ['колонка', 'колонки', 'колонок'])}`,
+    apply: 'Применить',
+    delete: 'Удалить',
+    applying_position: (v) => `Применяю «${v.name}»…`,
+    applied_with_problems: (v) => `Применено (${v.n}), но: ${v.problems}`,
+    applied: (v) => `Позиция «${v.name}» применена, изменено колонок: ${v.n}.`,
+    apply_failed: 'Не удалось применить: ',
+    saved: (v) => `Позиция «${v.name}» сохранена.`,
+    save_failed: 'Не сохранилось: ',
+    no_microphone: 'Нет доступа к микрофону: ',
+  },
+};
+
+function t(key, vars) {
+  const text = STRINGS[LANG][key] ?? STRINGS.en[key] ?? key;
+  return typeof text === 'function' ? text(vars || {}) : text;
+}
+
+// Static text in the page carries a key rather than words, so both languages
+// live in one place.
+function translatePage() {
+  document.querySelectorAll('[data-i18n]').forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((node) => {
+    node.placeholder = t(node.dataset.i18nPlaceholder);
+  });
+}
+
 // Every URL is relative to the page, never to the host root: behind Home
 // Assistant's ingress the app lives under /api/hassio_ingress/<token>/, and an
 // absolute '/api/…' would land on Home Assistant's own API instead.
@@ -93,7 +286,7 @@ function connect() {
   // an explanation of why the buttons are disabled.
   socket.onopen = () => refreshPlayers();
   socket.onclose = () => {
-    setStatus('Соединение потеряно, переподключаюсь…', 'err');
+    setStatus(t('disconnected'), 'err');
     setBusy(true);
     setTimeout(connect, 2000);
   };
@@ -104,7 +297,7 @@ function handle(message) {
   switch (message.type) {
     case 'record_start':
       recording = true;
-      setStatus('Идёт запись…', 'live');
+      setStatus(t('recording'), 'live');
       break;
 
     case 'record_stop':
@@ -113,7 +306,7 @@ function handle(message) {
         type: 'recording_done',
         sample_rate: audio ? audio.sampleRate : 48000,
       }));
-      setStatus('Считаю…', 'live');
+      setStatus(t('computing'), 'live');
       break;
 
     case 'progress':
@@ -135,7 +328,7 @@ function handle(message) {
       break;
 
     case 'error':
-      setStatus('Ошибка: ' + message.message, 'err');
+      setStatus(t('error') + message.message, 'err');
       setBusy(false);
       break;
   }
@@ -149,12 +342,14 @@ function onProgress(message) {
     // Two passes when verifying: measure, then prove.
     passOffset = message.which === 'after' ? 0.5 : 0;
     passSpan = message.which === 'after' ? 0.5 : 0.5;
-    setStatus(message.which === 'after' ? 'Проверочный замер…' : 'Замер…', 'live');
+    setStatus(t(message.which === 'after' ? 'verifying' : 'measuring'), 'live');
   } else if (message.stage === 'round') {
     setProgress(passOffset + passSpan * (message.round / message.rounds));
-    setStatus(`Играет: ${nameOf(message.player_id)} (${message.round}/${message.rounds})`, 'live');
+    setStatus(t('playing', {
+      name: nameOf(message.player_id), round: message.round, rounds: message.rounds,
+    }), 'live');
   } else if (message.stage === 'applying') {
-    setStatus(`Применяю поправки (${message.writes})…`, 'live');
+    setStatus(t('applying', { writes: message.writes }), 'live');
   }
 }
 
@@ -175,9 +370,7 @@ function describeRoundLength() {
   const ready = players.filter((p) => p.calibratable).length;
 
   if (readings < 1) {
-    el('chirps-note').textContent =
-      `Первые ${session.guard_chirps} свиста в каждом круге отбрасываются — их заглушает`
-      + ' переключение. Нужно больше.';
+    el('chirps-note').textContent = t('guard_too_many', { guard: session.guard_chirps });
     return;
   }
 
@@ -187,24 +380,13 @@ function describeRoundLength() {
   const total = rounds * chirps;
   const seconds = Math.round(total * session.period_seconds * 2);
 
-  let note = `${readings} ${plural(readings, 'отсчёт', 'отсчёта', 'отсчётов')} на колонку.`;
+  let note = t('readings', { n: readings });
   if (rounds) {
     // Spelled out because the first speaker sounding twice is otherwise a
     // surprise: at five per round it emits ten, and the count looks stuck.
-    note += ` Всего ${total} ${plural(total, 'свист', 'свиста', 'свистов')}:`
-      + ` первая колонка звучит дважды, по повтору измеряется уход часов телефона.`
-      + ` Замер с проверкой ≈ ${seconds} с.`;
+    note += t('total', { total, seconds });
   }
   el('chirps-note').textContent = note;
-}
-
-function plural(count, one, few, many) {
-  const mod100 = count % 100;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  const mod10 = count % 10;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
 }
 
 // ------------------------------------------------------------------ players
@@ -234,7 +416,7 @@ async function refreshPlayers() {
         // When the delay setting was not found, show what the server did
         // report: seeing the real names turns a mystery into a one-line fix.
         !p.calibratable && p.config_keys && p.config_keys.length
-          ? `<br><span class="sub">настройки: ${escapeHtml(p.config_keys.join(', '))}</span>`
+          ? `<br><span class="sub">${t('settings_found')}${escapeHtml(p.config_keys.join(', '))}</span>`
           : ''
       }${
         // A failed read is a different fault from an absent setting, and the
@@ -244,22 +426,22 @@ async function refreshPlayers() {
           : ''
       }</td>
       <td class="num">${p.calibratable
-        ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} мс`
+        ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} ${t('ms')}`
         : '—'}</td>
       <td>
         <span class="pill ${p.calibratable ? 'on' : 'off'}">${
-          escapeHtml(p.calibratable ? 'готова' : (p.excluded_because || 'не участвует'))
+          escapeHtml(p.calibratable ? t('ready_pill') : (p.excluded_because || t('not_taking_part')))
         }</span>
         <button class="toggle" data-toggle="${escapeAttr(p.player_id)}"
                 data-enable="${p.enabled ? '0' : '1'}"${busy ? ' disabled' : ''}>${
-          p.enabled ? 'выключить' : 'включить'
+          t(p.enabled ? 'switch_off' : 'switch_on')
         }</button>
       </td>
     </tr>`).join('');
 
   el('players').innerHTML =
-    `<thead><tr><th>Колонка</th><th>sync_adjust</th><th></th></tr></thead>
-     <tbody>${rows || '<tr><td colspan="3">Music Assistant не отдал ни одного плеера</td></tr>'}</tbody>`;
+    `<thead><tr><th>${t('speaker')}</th><th>sync_adjust</th><th></th></tr></thead>
+     <tbody>${rows || `<tr><td colspan="3">${t('no_players')}</td></tr>`}</tbody>`;
 
   const ready = players.filter((p) => p.calibratable);
   runnable = ready.length >= 2;
@@ -268,20 +450,16 @@ async function refreshPlayers() {
 
   if (!runnable) {
     setStatus(
-      players.length
-        ? 'Нужно минимум две включённые колонки. Причины — в списке выше.'
-        : 'Music Assistant не отдал ни одного плеера.',
+      t(players.length ? 'need_two' : 'no_players_status'),
       'err',
     );
   } else if (ready.some((p) => !p.is_sendspin)) {
     // Sendspin guarantees the tightest playback sync; other providers still
     // work, since any offset they add is measured and corrected, but the
     // result is only as steady as their own synchronisation.
-    setStatus(
-      `Готово, колонок: ${ready.length}. Часть из них не Sendspin — точность будет зависеть от их собственной синхронизации.`,
-    );
+    setStatus(t('ready_mixed', { n: ready.length }));
   } else {
-    setStatus(`Готово, колонок: ${ready.length}. Положите телефон туда, где слушаете.`);
+    setStatus(t('ready', { n: ready.length }));
   }
 }
 
@@ -294,7 +472,7 @@ async function setPlayerEnabled(playerId, enabled) {
     });
     if (!response.ok) throw new Error((await response.text()).trim());
   } catch (error) {
-    setStatus('Не переключилось: ' + error.message, 'err');
+    setStatus(t('toggle_failed') + error.message, 'err');
     return;
   }
   // The list owns the status line, so it has the last word on what the
@@ -314,40 +492,36 @@ function showReport(report) {
   after.className = 'headline ' + (report.improved ? 'good' : 'bad');
 
   el('corrections').innerHTML =
-    `<thead><tr><th>Колонка</th><th>было</th><th>стало</th><th>ошибка</th></tr></thead><tbody>` +
+    `<thead><tr><th>${t('speaker')}</th><th>${t('was')}</th><th>${t('now')}</th>`
+    + `<th>${t('residual')}</th></tr></thead><tbody>` +
     report.players.map((p) => `
       <tr>
-        <td>${escapeHtml(p.name)}${p.clamped ? ' <span class="pill off">предел</span>' : ''}</td>
-        <td class="num">${p.current_adjust_ms} мс</td>
-        <td class="num"><b>${p.target_adjust_ms} мс</b></td>
-        <td class="num">${p.residual_error_ms.toFixed(1)} мс</td>
+        <td>${escapeHtml(p.name)}${p.clamped ? ` <span class="pill off">${t('limit')}</span>` : ''}</td>
+        <td class="num">${p.current_adjust_ms} ${t('ms')}</td>
+        <td class="num"><b>${p.target_adjust_ms} ${t('ms')}</b></td>
+        <td class="num">${p.residual_error_ms.toFixed(1)} ${t('ms')}</td>
       </tr>`).join('') + '</tbody>';
 
   const notes = [];
   if (report.strategy === 'centered') {
-    notes.push(['warn',
-      'Разброс не покрывается односторонней задержкой, поэтому поправки отсчитаны от середины,'
-      + ' а не от самой медленной колонки.']);
+    notes.push(['warn', t('centered')]);
   }
   if (report.strategy === 'align_to_fastest') {
-    notes.push(['',
-      'Настройка задержки на этих колонках умеет только торопить, но не задерживать,'
-      + ' поэтому все подтянуты к самой быстрой колонке.']);
+    notes.push(['', t('fastest')]);
   }
   if (!report.fits) {
-    notes.push(['bad',
-      'Разброс не влезает в ±500 мс — часть колонок выровнять до конца нельзя.']);
+    notes.push(['bad', t('does_not_fit')]);
   }
   report.problems.forEach((p) => notes.push(['bad', p]));
   if (!notes.length && report.improved) {
-    notes.push(['', 'Проверочный замер подтвердил результат.']);
+    notes.push(['', t('verified')]);
   }
 
   el('notes').innerHTML = notes
     .map(([kind, text]) => `<p class="note ${kind}">${escapeHtml(text)}</p>`)
     .join('');
 
-  setStatus(report.improved ? 'Готово.' : 'Завершено с замечаниями.',
+  setStatus(t(report.improved ? 'done' : 'done_with_notes'),
             report.improved ? 'ok' : 'err');
 }
 
@@ -367,23 +541,23 @@ async function refreshProfiles() {
 
   if (!data.profiles.length) {
     el('profiles').innerHTML =
-      '<tbody><tr><td>Пока ничего не сохранено</td></tr></tbody>';
+      `<tbody><tr><td>${t('nothing_saved')}</td></tr></tbody>`;
     return;
   }
 
   el('profiles').innerHTML = '<tbody>' + data.profiles.map((p) => `
     <tr>
-      <td>${escapeHtml(p.name)}<br><span class="pill">${p.speakers} колонки</span></td>
+      <td>${escapeHtml(p.name)}<br><span class="pill">${t('n_speakers', { n: p.speakers })}</span></td>
       <td class="actions">
-        <button data-apply="${escapeAttr(p.name)}">Применить</button>
-        <button class="link" data-delete="${escapeAttr(p.name)}">Удалить</button>
+        <button data-apply="${escapeAttr(p.name)}">${t('apply')}</button>
+        <button class="link" data-delete="${escapeAttr(p.name)}">${t('delete')}</button>
       </td>
     </tr>`).join('') + '</tbody>';
 }
 
 async function applyProfile(name) {
   setBusy(true);
-  setStatus(`Применяю «${name}»…`, 'live');
+  setStatus(t('applying_position', { name }), 'live');
   try {
     const response = await fetch(`api/profiles/${encodeURIComponent(name)}/apply`, {
       method: 'POST',
@@ -394,12 +568,12 @@ async function applyProfile(name) {
     const written = result.applied.length;
     setStatus(
       result.problems.length
-        ? `Применено (${written}), но: ${result.problems.join('; ')}`
-        : `Позиция «${name}» применена, изменено колонок: ${written}.`,
+        ? t('applied_with_problems', { n: written, problems: result.problems.join('; ') })
+        : t('applied', { name, n: written }),
       result.problems.length ? 'err' : 'ok',
     );
   } catch (error) {
-    setStatus('Не удалось применить: ' + error.message, 'err');
+    setStatus(t('apply_failed') + error.message, 'err');
   } finally {
     setBusy(false);
     refreshPlayers();
@@ -417,10 +591,10 @@ async function saveProfile() {
   });
   if (response.ok) {
     el('save-name').value = '';
-    setStatus(`Позиция «${name}» сохранена.`, 'ok');
+    setStatus(t('saved', { name }), 'ok');
     refreshProfiles();
   } else {
-    setStatus('Не сохранилось: ' + (await response.text()), 'err');
+    setStatus(t('save_failed') + (await response.text()), 'err');
   }
 }
 
@@ -449,7 +623,7 @@ async function start(kind) {
     if (audio.state === 'suspended') await audio.resume();
     socket.send(JSON.stringify({ type: kind, chirps_per_round: chosenChirps() }));
   } catch (error) {
-    setStatus('Нет доступа к микрофону: ' + error.message, 'err');
+    setStatus(t('no_microphone') + error.message, 'err');
     // Inside Home Assistant's panel the page is an iframe, and whether it may
     // ask for the microphone is the embedding page's call, not ours. The same
     // ingress address works as a top-level tab, where the browser asks directly.
@@ -477,6 +651,7 @@ el('profiles').addEventListener('click', (event) => {
   if (remove) return deleteProfile(remove.dataset.delete);
 });
 
+translatePage();
 refreshPlayers();
 refreshProfiles();
 connect();

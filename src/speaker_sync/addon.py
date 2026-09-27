@@ -138,6 +138,7 @@ def resolve(options: dict, info: AddonInfo, token_file: Path) -> dict[str, str]:
         "SPEAKER_SYNC_AUDIO_BASE_URL": audio_base_url.rstrip("/"),
         "SPEAKER_SYNC_ACCESS_TOKEN": access_token,
         "SPEAKER_SYNC_TRUSTED_PROXY": INGRESS_PROXY,
+        "SPEAKER_SYNC_LANGUAGE": (options.get("language") or "auto").strip().lower(),
         "SPEAKER_SYNC_STATE_DIR": str(token_file.parent),
         "SPEAKER_SYNC_HOST": "0.0.0.0",
         "SPEAKER_SYNC_PORT": str(PORT),

@@ -29,6 +29,7 @@ from urllib.parse import urlencode
 import numpy as np
 from aiohttp import WSMsgType, web
 
+from speaker_sync import i18n
 from speaker_sync.calibration.profiles import Profile, ProfileStore, apply_profile
 from speaker_sync.calibration.session import (
     CalibrationReport,
@@ -37,6 +38,7 @@ from speaker_sync.calibration.session import (
 )
 from speaker_sync.calibration.validate import determine_sign
 from speaker_sync.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
+from speaker_sync.i18n import resolve_language, say
 from speaker_sync.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -61,6 +63,10 @@ OPEN_PATHS = frozenset({"/signal.wav", "/healthz"})
 
 logger = logging.getLogger("speaker_sync.web")
 
+
+def _busy_message() -> str:
+    return say(en="a measurement is already running", ru="уже идёт измерение")
+
 STATE = web.AppKey("state", "AppState")
 
 
@@ -81,6 +87,9 @@ class AppState:
     access_token: str | None = None
     """Shared secret for the UI, API and WebSocket. ``None`` disables the
     check, which is what local development and the simulator run with."""
+
+    language: str = "auto"
+    """``en``, ``ru``, or ``auto`` to follow each browser's own preference."""
 
     trusted_proxy: str | None = None
     """Address whose requests were already authenticated upstream.
@@ -196,11 +205,17 @@ class BrowserRecorder:
             await asyncio.wait_for(self._complete.wait(), self._timeout)
         except TimeoutError as error:
             raise RuntimeError(
-                f"the browser did not finish uploading the recording within {self._timeout:.0f}s"
+                say(
+                    en="the browser did not finish uploading the recording "
+                    f"within {self._timeout:.0f}s",
+                    ru=f"браузер не успел загрузить запись за {self._timeout:.0f} с",
+                )
             ) from error
 
         if not self._chunks or not self._sample_rate:
-            raise RuntimeError("the browser returned an empty recording")
+            raise RuntimeError(
+                say(en="the browser returned an empty recording", ru="браузер прислал пустую запись")
+            )
         return np.concatenate(self._chunks), self._sample_rate
 
     def feed(self, payload: bytes) -> None:
@@ -252,6 +267,18 @@ def _redirect_without_token(request: web.Request, token: str) -> web.HTTPFound:
 
 
 @web.middleware
+async def language_middleware(request: web.Request, handler):
+    """Pick the language for everything this request produces.
+
+    Set on the request's context, so a calibration started from a socket keeps
+    the language of the browser that started it.
+    """
+    state: AppState = request.app[STATE]
+    i18n.use(resolve_language(state.language, request.headers.get("Accept-Language")))
+    return await handler(request)
+
+
+@web.middleware
 async def auth_middleware(request: web.Request, handler):
     state: AppState = request.app[STATE]
     expected = state.access_token
@@ -266,7 +293,10 @@ async def auth_middleware(request: web.Request, handler):
         supplied.encode("utf-8"), expected.encode("utf-8")
     ):
         raise web.HTTPUnauthorized(
-            text="Access token required. Open this address with ?token=… once.",
+            text=say(
+                en="Access token required. Open this address with ?token=… once.",
+                ru="Нужен токен доступа. Откройте этот адрес один раз с ?token=…",
+            ),
             content_type="text/plain",
         )
 
@@ -277,11 +307,19 @@ async def auth_middleware(request: web.Request, handler):
 
 def create_app(state: AppState) -> web.Application:
     """The whole surface on one port: UI, API, socket, track, health."""
-    app = web.Application(middlewares=[auth_middleware])
+    app = web.Application(middlewares=[language_middleware, auth_middleware])
     app[STATE] = state
 
+    page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
     async def index(_: web.Request) -> web.Response:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        # The page's lang attribute is how the client learns which language
+        # to draw itself in — resolved here, where the browser's preference
+        # and the configured setting are both known.
+        return web.Response(
+            text=page.replace('<html lang="en">', f'<html lang="{i18n.current()}">', 1),
+            content_type="text/html",
+        )
 
     async def healthz(_: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
@@ -329,7 +367,10 @@ def create_app(state: AppState) -> web.Application:
         """Flip one speaker's manual switch."""
         if state.busy:
             raise web.HTTPConflict(
-                text="Идёт измерение — состав колонок сейчас менять нельзя.",
+                text=say(
+                    en="A measurement is running — the set of speakers cannot change now.",
+                    ru="Идёт измерение — состав колонок сейчас менять нельзя.",
+                ),
                 content_type="text/plain",
             )
 
@@ -378,7 +419,10 @@ def create_app(state: AppState) -> web.Application:
     def store() -> ProfileStore:
         if state.store is None:
             raise web.HTTPServiceUnavailable(
-                text="No state directory configured, so positions cannot be saved.",
+                text=say(
+                    en="No state directory configured, so positions cannot be saved.",
+                    ru="Не задан каталог состояния, поэтому позиции не сохраняются.",
+                ),
                 content_type="text/plain",
             )
         return state.store
@@ -394,24 +438,36 @@ def create_app(state: AppState) -> web.Application:
     async def profiles_save(request: web.Request) -> web.Response:
         if state.last_report is None:
             raise web.HTTPBadRequest(
-                text="Nothing to save yet — run a calibration first.",
+                text=say(
+                    en="Nothing to save yet — run a calibration first.",
+                    ru="Сохранять пока нечего — сначала проведите калибровку.",
+                ),
                 content_type="text/plain",
             )
         payload = await request.json()
         name = str(payload.get("name", "")).strip()
         if not name:
-            raise web.HTTPBadRequest(text="A position needs a name.", content_type="text/plain")
+            raise web.HTTPBadRequest(
+                text=say(en="A position needs a name.", ru="У позиции должно быть имя."),
+                content_type="text/plain",
+            )
 
         profile = store().save(Profile.from_report(name, state.last_report))
         return web.json_response({"profile": _describe_profile(profile)}, status=201)
 
     async def profiles_apply(request: web.Request) -> web.Response:
         if state.busy:
-            raise web.HTTPConflict(text="A measurement is running.", content_type="text/plain")
+            raise web.HTTPConflict(
+                text=say(en="A measurement is running.", ru="Идёт измерение."),
+                content_type="text/plain",
+            )
 
         profile = store().get(request.match_info["name"])
         if profile is None:
-            raise web.HTTPNotFound(text="No such position.", content_type="text/plain")
+            raise web.HTTPNotFound(
+                text=say(en="No such position.", ru="Такой позиции нет."),
+                content_type="text/plain",
+            )
 
         state.busy = True
         try:
@@ -493,7 +549,7 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
                 recorder.complete(payload.get("sample_rate", 48000))
             elif kind in {"calibrate", "probe_sign"}:
                 if running is not None and not running.done():
-                    outbox.put_nowait({"type": "error", "message": "уже идёт измерение"})
+                    outbox.put_nowait({"type": "error", "message": _busy_message()})
                 else:
                     if isinstance(payload.get("chirps_per_round"), int):
                         state.set_chirps_per_round(payload["chirps_per_round"])
@@ -515,7 +571,7 @@ async def _run_job(
     outbox: "asyncio.Queue[dict]",
 ) -> None:
     if state.busy:
-        outbox.put_nowait({"type": "error", "message": "уже идёт измерение"})
+        outbox.put_nowait({"type": "error", "message": _busy_message()})
         return
 
     state.busy = True

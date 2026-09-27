@@ -56,6 +56,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     serve.add_argument(
+        "--language",
+        choices=("auto", "en", "ru"),
+        default=os.environ.get("SPEAKER_SYNC_LANGUAGE", "auto").strip().lower() or "auto",
+        help=(
+            "language of the UI and its messages; auto follows each browser, "
+            "falling back to English  [SPEAKER_SYNC_LANGUAGE]"
+        ),
+    )
+    serve.add_argument(
         "--state-dir",
         type=Path,
         default=Path(os.environ.get("SPEAKER_SYNC_STATE_DIR", Path.home() / ".speaker-sync")),
@@ -145,6 +154,7 @@ async def _serve(args) -> int:
         audio_base_url=args.audio_base_url.rstrip("/"),
         access_token=args.access_token or None,
         trusted_proxy=args.trusted_proxy or None,
+        language=args.language,
     )
 
     from speaker_sync.calibration.profiles import ProfileStore

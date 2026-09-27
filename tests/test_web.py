@@ -143,25 +143,54 @@ async def test_players_from_another_provider_are_still_offered(state):
     assert all(p["calibratable"] for p in payload["players"])
 
 
+EXCLUDED_PLAYERS = [
+    PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
+    PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
+    PlayerInfo("off", "Выключена", "universal_player", available=False),
+]
+
+
+async def reasons_for(state, **headers) -> dict:
+    state.backend.extra_players = list(EXCLUDED_PLAYERS)
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players", headers=headers)).json()
+    finally:
+        await client.close()
+    return {p["name"]: p["excluded_because"] for p in payload["players"]}
+
+
 async def test_an_excluded_player_says_why(state):
     """The list is the only place a user can find out why a speaker is sitting
     out, so the reason travels with it."""
-    state.backend.extra_players = [
-        PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
-        PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
-        PlayerInfo("off", "Выключена", "universal_player", available=False),
-    ]
-    client = await client_for(create_app(state))
-    try:
-        payload = await (await client.get("/api/players")).json()
-    finally:
-        await client.close()
+    reasons = await reasons_for(state)
 
-    reasons = {p["name"]: p["excluded_because"] for p in payload["players"]}
+    assert reasons["Везде"] == "a group, not a speaker"
+    assert reasons["Без настройки"] == "no delay setting"
+    assert reasons["Выключена"] == "unavailable"
+    assert reasons["Кухня (ESP32)"] is None
+
+
+async def test_reasons_follow_the_browser_language(state):
+    reasons = await reasons_for(state, **{"Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"})
+
     assert reasons["Везде"] == "группа, а не колонка"
     assert reasons["Без настройки"] == "нет настройки задержки"
     assert reasons["Выключена"] == "недоступна"
-    assert reasons["Кухня (ESP32)"] is None
+
+
+async def test_a_fixed_language_overrides_the_browser():
+    reasons = await reasons_for(make_state(language="en"), **{"Accept-Language": "ru"})
+    assert reasons["Везде"] == "a group, not a speaker"
+
+
+async def test_the_page_tells_the_client_its_language():
+    client = await client_for(create_app(make_state(language="ru")))
+    try:
+        page = await (await client.get("/")).text()
+    finally:
+        await client.close()
+    assert '<html lang="ru">' in page
 
 
 async def test_ui_and_health_are_served(state):
@@ -279,7 +308,7 @@ async def test_switching_a_speaker_off_takes_it_out_of_the_session(state):
     by_id = {p["player_id"]: p for p in payload["players"]}
     assert by_id["avr"]["enabled"] is False
     assert by_id["avr"]["calibratable"] is False
-    assert by_id["avr"]["excluded_because"] == "выключена вручную"
+    assert by_id["avr"]["excluded_because"] == "switched off here"
     # Nothing else moves.
     assert by_id["esp32"]["calibratable"] is True
 

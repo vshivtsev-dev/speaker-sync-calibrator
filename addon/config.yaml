@@ -32,8 +32,10 @@ ports_description:
 
 watchdog: http://[HOST]:[PORT:8080]/healthz
 
-options: {}
+options:
+  language: auto
 schema:
+  language: list(auto|en|ru)
   ma_url: url?
   ma_token: password?
   audio_base_url: url?

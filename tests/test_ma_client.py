@@ -324,7 +324,7 @@ async def test_a_player_with_no_delay_setting_reports_what_it_does_have():
     (player,) = await MusicAssistantBackend(client).list_players()
 
     assert not player.is_calibratable
-    assert player.exclusion_reason == "нет настройки задержки"
+    assert player.exclusion_reason == "no delay setting"
     assert player.config_keys == ("volume", "crossfade")
 
 
@@ -366,7 +366,7 @@ async def test_settings_that_cannot_be_read_are_not_reported_as_absent():
     (player,) = await MusicAssistantBackend(client).list_players()
 
     assert not player.is_calibratable
-    assert player.exclusion_reason == "не удалось прочитать настройки"
+    assert player.exclusion_reason == "its settings could not be read"
     assert player.config_error == "Command timed out"
 
 
@@ -407,7 +407,7 @@ async def test_a_sync_group_is_listed_but_not_calibratable():
     group = next(p for p in players if p.player_id == "syncgroup_wgsar5sd")
     assert not group.renders_audio
     assert not group.is_calibratable
-    assert group.exclusion_reason == "группа, а не колонка"
+    assert group.exclusion_reason == "a group, not a speaker"
     assert next(p for p in players if p.player_id == "esp32").is_calibratable
 
 

@@ -28,6 +28,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from speaker_sync.i18n import say
 from speaker_sync.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
 
 logger = logging.getLogger("speaker_sync.ma")
@@ -313,14 +314,20 @@ def unreachable_track_message(url: str, error: Exception) -> str:
     other way round — so a failure here says nothing about the URL the browser
     uses, which is the address people naturally reach for.
     """
-    return (
-        f"Music Assistant не смог загрузить тестовый трек по адресу {url} — "
+    return say(
+        en=f"Music Assistant could not load the test track from {url} — "
+        "so it did not reach Speaker Sync Calibrator. That address comes from "
+        "SPEAKER_SYNC_AUDIO_BASE_URL: it is how Music Assistant reaches us, and it is "
+        "not the address you open the UI on. A Docker service name only works when "
+        "Music Assistant is on the same network; otherwise use the host's LAN address "
+        f"and an open port. Music Assistant said: {error}",
+        ru=f"Music Assistant не смог загрузить тестовый трек по адресу {url} — "
         "значит, он не достучался до Speaker Sync Calibrator. Это адрес из переменной "
         "SPEAKER_SYNC_AUDIO_BASE_URL, по которому Music Assistant обращается к нам, "
         "и он не совпадает с адресом, по которому вы открываете интерфейс. "
         "Имя docker-сервиса годится, только если Music Assistant стоит в той же "
         "сети; иначе нужен LAN-адрес хоста и открытый порт. "
-        f"Ответ Music Assistant: {error}"
+        f"Ответ Music Assistant: {error}",
     )
 
 

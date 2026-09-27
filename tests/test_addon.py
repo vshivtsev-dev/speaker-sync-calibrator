@@ -25,6 +25,7 @@ def test_music_assistant_and_own_address_are_discovered(tmp_path):
     assert env["SPEAKER_SYNC_AUDIO_BASE_URL"] == "http://172.30.33.7:8080"
     assert env["SPEAKER_SYNC_TRUSTED_PROXY"] == INGRESS_PROXY
     assert env["SPEAKER_SYNC_STATE_DIR"] == str(tmp_path)
+    assert env["SPEAKER_SYNC_LANGUAGE"] == "auto"
 
 
 def test_the_beta_add_on_is_found_too(tmp_path):
@@ -43,6 +44,7 @@ def test_options_win_over_discovery(tmp_path):
             "ma_token": " abc ",
             "audio_base_url": "http://192.168.1.20:8080/",
             "access_token": "chosen",
+            "language": "ru",
         },
         supervisor(d5369777_music_assistant=MA_ON_HOST_NETWORK, self=SELF),
         tmp_path / "access_token",
@@ -52,6 +54,7 @@ def test_options_win_over_discovery(tmp_path):
     assert env["SPEAKER_SYNC_MA_TOKEN"] == "abc"
     assert env["SPEAKER_SYNC_AUDIO_BASE_URL"] == "http://192.168.1.20:8080"
     assert env["SPEAKER_SYNC_ACCESS_TOKEN"] == "chosen"
+    assert env["SPEAKER_SYNC_LANGUAGE"] == "ru"
     assert not (tmp_path / "access_token").exists()
 
 

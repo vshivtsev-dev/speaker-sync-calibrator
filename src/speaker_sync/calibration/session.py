@@ -43,6 +43,7 @@ from speaker_sync.dsp.signals import (
     TestSignal,
     build_test_signal,
 )
+from speaker_sync.i18n import say
 from speaker_sync.ma.backend import PlayerInfo, SpeakerBackend
 
 Sleeper = Callable[[float], Awaitable[None]]
@@ -303,10 +304,16 @@ async def confirm_mute(
         if deadline <= 0:
             names = ", ".join(f"«{players[pid].name}»" for pid in stuck)
             raise RuntimeError(
-                f"эти колонки не отреагировали на команду заглушить: {names}. "
-                "Замер требует, чтобы в каждом круге звучала ровно одна колонка, "
-                "иначе все круги измерят одну и ту же. Проверьте в Music Assistant "
-                "настройку mute_control у этих колонок."
+                say(
+                    en=f"these speakers did not respond to the mute command: {names}. "
+                    "The measurement needs exactly one speaker playing in each round, "
+                    "otherwise every round measures the same one. Check the mute_control "
+                    "setting of these speakers in Music Assistant.",
+                    ru=f"эти колонки не отреагировали на команду заглушить: {names}. "
+                    "Замер требует, чтобы в каждом круге звучала ровно одна колонка, "
+                    "иначе все круги измерят одну и ту же. Проверьте в Music Assistant "
+                    "настройку mute_control у этих колонок.",
+                )
             )
 
         await sleep(GROUP_POLL_SECONDS)
@@ -358,10 +365,18 @@ def _group_failure_message(players: dict, leader: str, missing: Sequence[str]) -
 
     names = ", ".join(describe(pid) for pid in missing)
     lines = [
-        f"эти колонки не встали в одну группу с «{describe(leader)}», "
-        f"поэтому они не услышат тестовый трек: {names}.",
-        "Замер сравнивает время прихода одного и того же потока, так что "
-        "колонка вне группы измерена быть не может.",
+        say(
+            en=f"these speakers did not join a group with «{describe(leader)}», "
+            f"so they will not hear the test track: {names}.",
+            ru=f"эти колонки не встали в одну группу с «{describe(leader)}», "
+            f"поэтому они не услышат тестовый трек: {names}.",
+        ),
+        say(
+            en="The measurement compares arrival times of one and the same stream, so "
+            "a speaker outside the group cannot be measured.",
+            ru="Замер сравнивает время прихода одного и того же потока, так что "
+            "колонка вне группы измерена быть не может.",
+        ),
     ]
 
     leader_player = players.get(leader)
@@ -371,8 +386,13 @@ def _group_failure_message(players: dict, leader: str, missing: Sequence[str]) -
             continue
         if not player.can_group_with_player(leader_player):
             lines.append(
-                f"Music Assistant не объединяет «{player.name}» с «{leader_player.name}» — "
-                "их провайдеры несовместимы; выключите одну из них."
+                say(
+                    en=f"Music Assistant does not group «{player.name}» with "
+                    f"«{leader_player.name}» — their providers are incompatible; "
+                    "switch one of them off.",
+                    ru=f"Music Assistant не объединяет «{player.name}» с «{leader_player.name}» — "
+                    "их провайдеры несовместимы; выключите одну из них.",
+                )
             )
     return " ".join(lines)
 
@@ -503,10 +523,16 @@ def _check_the_rounds_isolated(
         return []  # they agree because their delays differ — that is alignment
 
     return [
-        f"все колонки измерились одинаково с точностью до {INDISTINGUISHABLE_MS} мс, "
-        "хотя задержка у всех одна и та же — значит, круги никого не выделили: почти "
-        "наверняка одна колонка звучала всё время, а остальные молчали. Проверьте, что "
-        "каждая колонка действительно звучит в свою очередь."
+        say(
+            en=f"every speaker measured the same to within {INDISTINGUISHABLE_MS} ms, "
+            "although all of them have the same delay set — so the rounds singled no one "
+            "out: almost certainly one speaker played throughout and the others stayed "
+            "silent. Check that each speaker really plays in its turn.",
+            ru=f"все колонки измерились одинаково с точностью до {INDISTINGUISHABLE_MS} мс, "
+            "хотя задержка у всех одна и та же — значит, круги никого не выделили: почти "
+            "наверняка одна колонка звучала всё время, а остальные молчали. Проверьте, что "
+            "каждая колонка действительно звучит в свою очередь.",
+        )
     ]
 
 
@@ -527,8 +553,10 @@ async def calibrate(
     players = [p for p in await backend.list_players() if p.is_calibratable]
     if len(players) < 2:
         raise ValueError(
-            "need at least two players that make a sound and carry a sync_adjust "
-            "setting"
+            say(
+                en="need at least two speakers that make a sound and have a delay setting",
+                ru="нужно хотя бы две колонки, которые звучат и имеют настройку задержки",
+            )
         )
 
     _report(progress, stage="pass", which="before", players=len(players))
@@ -582,16 +610,27 @@ async def calibrate(
             sign = observed
             corrected_sign = True
             problems.append(
-                "на этом сервере положительный sync_adjust не задерживает колонку, "
-                "а торопит, поэтому первая попытка удвоила расхождение вместо того чтобы "
-                "его убрать. Поправки записаны заново, в обратную сторону."
+                say(
+                    en="on this server a positive sync_adjust advances a speaker rather "
+                    "than delaying it, so the first attempt doubled the spread instead of "
+                    "removing it. The corrections have been written again, the other way "
+                    "round.",
+                    ru="на этом сервере положительный sync_adjust не задерживает колонку, "
+                    "а торопит, поэтому первая попытка удвоила расхождение вместо того чтобы "
+                    "его убрать. Поправки записаны заново, в обратную сторону.",
+                )
             )
             continue
 
         if after.relative_spread_ms() > before.relative_spread_ms():
             problems.append(
-                "после применения стало хуже — либо колонка проигнорировала запись, "
-                "либо знак sync_adjust на этом сервере не такой, как показал замер"
+                say(
+                    en="it got worse after applying — either a speaker ignored the write, "
+                    "or sync_adjust on this server runs the other way from what the "
+                    "measurement showed",
+                    ru="после применения стало хуже — либо колонка проигнорировала запись, "
+                    "либо знак sync_adjust на этом сервере не такой, как показал замер",
+                )
             )
         break
 

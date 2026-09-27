@@ -23,6 +23,7 @@ from speaker_sync.calibration.session import (
     measure_once,
 )
 from speaker_sync.calibration.solver import SYNC_ADJUST_LIMIT_MS
+from speaker_sync.i18n import say
 from speaker_sync.ma.backend import SpeakerBackend
 
 DEFAULT_PROBE_MS = 100
@@ -62,8 +63,12 @@ async def determine_sign(
     players = [p for p in await backend.list_players() if p.is_calibratable]
     if len(players) < 2:
         raise ValueError(
-            "need at least two players that make a sound and carry a sync_adjust "
-            "setting to probe the sign"
+            say(
+                en="need at least two speakers that make a sound and have a delay "
+                "setting to probe the direction",
+                ru="чтобы проверить направление, нужно хотя бы две колонки, которые "
+                "звучат и имеют настройку задержки",
+            )
         )
 
     reference = reference_id or players[0].player_id
@@ -92,7 +97,11 @@ async def determine_sign(
 
     baseline = await relative_latency()
     if baseline is None:
-        return SignCheck(1, 0.0, 0, probe.player_id, False, "baseline pass produced no reading")
+        return SignCheck(1, 0.0, 0, probe.player_id, False, say(
+                en="the baseline pass produced no reading",
+                ru="исходный замер не дал ни одного отсчёта",
+            ),
+        )
 
     try:
         await backend.set_sync_adjust(probe.player_id, original + delta)
@@ -101,7 +110,11 @@ async def determine_sign(
         await backend.set_sync_adjust(probe.player_id, original)
 
     if probed is None:
-        return SignCheck(1, 0.0, delta, probe.player_id, False, "probe pass produced no reading")
+        return SignCheck(1, 0.0, delta, probe.player_id, False, say(
+                en="the probe pass produced no reading",
+                ru="пробный замер не дал ни одного отсчёта",
+            ),
+        )
 
     observed = probed - baseline
     tolerance = max(ABSOLUTE_TOLERANCE_MS, abs(delta) * RELATIVE_TOLERANCE)
@@ -114,9 +127,11 @@ async def determine_sign(
             applied_ms=delta,
             probe_player_id=probe.player_id,
             conclusive=False,
-            detail=(
-                f"asked for {delta:+d} ms but the arrival moved {observed:+.1f} ms; "
-                "assuming the documented convention"
+            detail=say(
+                en=f"asked for {delta:+d} ms but the arrival moved {observed:+.1f} ms; "
+                "assuming the documented convention",
+                ru=f"запрошено {delta:+d} мс, а приход сдвинулся на {observed:+.1f} мс; "
+                "принимаю документированное направление",
             ),
         )
 
@@ -127,8 +142,10 @@ async def determine_sign(
         applied_ms=delta,
         probe_player_id=probe.player_id,
         conclusive=True,
-        detail=(
-            f"{delta:+d} ms moved the arrival {observed:+.1f} ms — "
-            f"positive sync_adjust {'delays' if sign == 1 else 'advances'} the player"
+        detail=say(
+            en=f"{delta:+d} ms moved the arrival {observed:+.1f} ms — "
+            f"positive sync_adjust {'delays' if sign == 1 else 'advances'} the player",
+            ru=f"{delta:+d} мс сдвинули приход на {observed:+.1f} мс — "
+            f"положительный sync_adjust {'задерживает' if sign == 1 else 'торопит'} колонку",
         ),
     )

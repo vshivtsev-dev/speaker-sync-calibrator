@@ -123,6 +123,7 @@ speaker-sync serve
 | `SPEAKER_SYNC_STATE_DIR` | saved positions and the probed sign; `/data` in the image |
 | `SPEAKER_SYNC_HOST` / `SPEAKER_SYNC_PORT` | bind address, default `0.0.0.0:8080` |
 | `SPEAKER_SYNC_TRUSTED_PROXY` | a proxy that authenticates users itself (HA ingress); its requests skip the token |
+| `SPEAKER_SYNC_LANGUAGE` | `auto` (default: each browser's language, else English), `en` or `ru` |
 
 `SPEAKER_SYNC_AUDIO_BASE_URL` is the one that catches people out, and it is
 required rather than guessed. It is *not* the address the browser uses — it is

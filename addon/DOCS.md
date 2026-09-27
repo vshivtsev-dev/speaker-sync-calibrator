@@ -31,6 +31,12 @@ microphone through to an embedded page.
   as Music Assistant sees it, with the mapped port, e.g.
   `http://192.168.1.5:8080`.
 
+## Language
+
+The interface and its messages come in English and Russian. **Language**
+set to `auto` follows each browser's language and falls back to English;
+`en` or `ru` fixes it for everyone.
+
 ## Direct access
 
 With port `8080` mapped, the app is reachable without ingress, guarded by an
