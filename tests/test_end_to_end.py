@@ -13,10 +13,10 @@ import pytest
 
 from sim.fake_ma import FakeMusicAssistant, SimulatedRecorder, VirtualClock, mixed_speakers
 from sim.virtual_room import RoomConfig, VirtualSpeaker
-from spinalign.calibration.profiles import Profile, apply_profile
-from spinalign.calibration.session import SessionConfig, calibrate, measure_once
-from spinalign.calibration.validate import determine_sign
-from spinalign.ma.backend import PlayerInfo, SelectedSpeakers
+from speaker_sync.calibration.profiles import Profile, apply_profile
+from speaker_sync.calibration.session import SessionConfig, calibrate, measure_once
+from speaker_sync.calibration.validate import determine_sign
+from speaker_sync.ma.backend import PlayerInfo, SelectedSpeakers
 
 
 def make_server(speakers=None, **room_kwargs):

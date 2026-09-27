@@ -171,7 +171,7 @@ class PlayerInfo:
         arrival times of the same stream, so whatever synchronisation error a
         protocol introduces is simply part of what gets measured and corrected
         — as long as it is stable, and the outlier check in
-        :mod:`spinalign.calibration.measure` is what notices when it is not.
+        :mod:`speaker_sync.calibration.measure` is what notices when it is not.
         Sendspin gives the tightest guarantee, which is worth telling the user
         about, but demanding it excluded every speaker on real systems where
         the same devices are exposed through another provider.

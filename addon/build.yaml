@@ -4,4 +4,4 @@ build_from:
 args:
   # Which revision of this repository the add-on installs. A branch, a tag or
   # a commit — anything GitHub serves an archive for.
-  SPINALIGN_REF: main
+  SPEAKER_SYNC_REF: main

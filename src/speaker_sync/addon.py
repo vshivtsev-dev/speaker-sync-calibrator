@@ -1,4 +1,4 @@
-"""Start ``spinalign serve`` inside a Home Assistant add-on.
+"""Start ``speaker-sync serve`` inside a Home Assistant add-on.
 
 A standalone container is told everything through environment variables. An
 add-on can find most of it out instead: the Supervisor knows where the Music
@@ -24,7 +24,7 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
-logger = logging.getLogger("spinalign.addon")
+logger = logging.getLogger("speaker_sync.addon")
 
 DATA_DIR = Path("/data")
 OPTIONS_FILE = DATA_DIR / "options.json"
@@ -133,14 +133,14 @@ def resolve(options: dict, info: AddonInfo, token_file: Path) -> dict[str, str]:
     access_token = (options.get("access_token") or "").strip() or load_access_token(token_file)
 
     return {
-        "SPINALIGN_MA_URL": ma_url.rstrip("/"),
-        "SPINALIGN_MA_TOKEN": (options.get("ma_token") or "").strip(),
-        "SPINALIGN_AUDIO_BASE_URL": audio_base_url.rstrip("/"),
-        "SPINALIGN_ACCESS_TOKEN": access_token,
-        "SPINALIGN_TRUSTED_PROXY": INGRESS_PROXY,
-        "SPINALIGN_STATE_DIR": str(token_file.parent),
-        "SPINALIGN_HOST": "0.0.0.0",
-        "SPINALIGN_PORT": str(PORT),
+        "SPEAKER_SYNC_MA_URL": ma_url.rstrip("/"),
+        "SPEAKER_SYNC_MA_TOKEN": (options.get("ma_token") or "").strip(),
+        "SPEAKER_SYNC_AUDIO_BASE_URL": audio_base_url.rstrip("/"),
+        "SPEAKER_SYNC_ACCESS_TOKEN": access_token,
+        "SPEAKER_SYNC_TRUSTED_PROXY": INGRESS_PROXY,
+        "SPEAKER_SYNC_STATE_DIR": str(token_file.parent),
+        "SPEAKER_SYNC_HOST": "0.0.0.0",
+        "SPEAKER_SYNC_PORT": str(PORT),
     }
 
 
@@ -154,18 +154,18 @@ def main() -> int:
     try:
         env = resolve(options, supervisor_info, TOKEN_FILE)
     except ValueError as error:
-        print(f"SpinAlign: {error}", file=sys.stderr)
+        print(f"Speaker Sync Calibrator: {error}", file=sys.stderr)
         return 1
 
-    print(f"Music Assistant: {env['SPINALIGN_MA_URL']}")
-    print(f"Test track served to Music Assistant from: {env['SPINALIGN_AUDIO_BASE_URL']}")
+    print(f"Music Assistant: {env['SPEAKER_SYNC_MA_URL']}")
+    print(f"Test track served to Music Assistant from: {env['SPEAKER_SYNC_AUDIO_BASE_URL']}")
     print(
-        "Open SpinAlign from the Home Assistant sidebar. For direct access on the "
-        f"mapped port, add ?token={env['SPINALIGN_ACCESS_TOKEN']} to the address once."
+        "Open Speaker Sync Calibrator from the Home Assistant sidebar. For direct access on the "
+        f"mapped port, add ?token={env['SPEAKER_SYNC_ACCESS_TOKEN']} to the address once."
     )
     os.environ.update(env)
 
-    from spinalign.cli import main as cli_main
+    from speaker_sync.cli import main as cli_main
 
     # ``serve`` only returns when it could not start — in practice because
     # Music Assistant is not answering yet.

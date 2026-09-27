@@ -68,7 +68,7 @@ async function openMicrophone() {
   audio = new AudioContext();
   await audio.audioWorklet.addModule('static/recorder-worklet.js');
 
-  node = new AudioWorkletNode(audio, 'spinalign-recorder');
+  node = new AudioWorkletNode(audio, 'speaker-sync-recorder');
   node.port.onmessage = (event) => {
     if (recording && socket && socket.readyState === WebSocket.OPEN) {
       socket.send(event.data.buffer);

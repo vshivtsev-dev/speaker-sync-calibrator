@@ -29,15 +29,15 @@ from urllib.parse import urlencode
 import numpy as np
 from aiohttp import WSMsgType, web
 
-from spinalign.calibration.profiles import Profile, ProfileStore, apply_profile
-from spinalign.calibration.session import (
+from speaker_sync.calibration.profiles import Profile, ProfileStore, apply_profile
+from speaker_sync.calibration.session import (
     CalibrationReport,
     SessionConfig,
     calibrate,
 )
-from spinalign.calibration.validate import determine_sign
-from spinalign.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
-from spinalign.ma.backend import SelectedSpeakers, SpeakerBackend
+from speaker_sync.calibration.validate import determine_sign
+from speaker_sync.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
+from speaker_sync.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -55,11 +55,11 @@ RECORDING_TIMEOUT_SHARE = 0.5
 MIN_CHIRPS_PER_ROUND = 3
 MAX_CHIRPS_PER_ROUND = 40
 
-TOKEN_COOKIE = "spinalign_token"
+TOKEN_COOKIE = "speaker_sync_token"
 TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
 OPEN_PATHS = frozenset({"/signal.wav", "/healthz"})
 
-logger = logging.getLogger("spinalign.web")
+logger = logging.getLogger("speaker_sync.web")
 
 STATE = web.AppKey("state", "AppState")
 
@@ -603,7 +603,7 @@ async def serve(
             "audio_base_url is not set. It must be the address Music Assistant "
             "can reach this app on — a service name on the Docker network, or "
             "the host's LAN address — not the address the browser uses. "
-            "Set SPINALIGN_AUDIO_BASE_URL or pass --audio-base-url."
+            "Set SPEAKER_SYNC_AUDIO_BASE_URL or pass --audio-base-url."
         )
 
     runner = web.AppRunner(create_app(state))
@@ -622,7 +622,7 @@ async def serve(
         print("  open the UI once with ?token=… — it is then stored in a cookie")
     else:
         print("  WARNING: no access token set, anyone who reaches this can run a")
-        print("           calibration. Set SPINALIGN_ACCESS_TOKEN when exposing it.")
+        print("           calibration. Set SPEAKER_SYNC_ACCESS_TOKEN when exposing it.")
 
     try:
         await asyncio.Event().wait()

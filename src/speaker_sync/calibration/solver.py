@@ -131,7 +131,7 @@ def solve(
     ``sign`` encodes what a positive ``sync_adjust`` does to arrival time: ``1``
     when it delays the player, ``-1`` when the server's convention is the
     opposite. It is established empirically by
-    :mod:`spinalign.calibration.validate` rather than assumed, so a convention
+    :mod:`speaker_sync.calibration.validate` rather than assumed, so a convention
     change upstream turns into a flipped flag instead of a silent regression.
 
     The target arrival time is whatever every speaker can actually reach. Each

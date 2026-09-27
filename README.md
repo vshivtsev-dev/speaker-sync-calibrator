@@ -1,4 +1,4 @@
-# SpinAlign
+# Speaker Sync Calibrator
 
 Acoustic latency calibration for multi-room speakers on
 [Music Assistant](https://music-assistant.io) and the
@@ -6,6 +6,9 @@ Acoustic latency calibration for multi-room speakers on
 
 Put your phone where you actually listen, press one button, and every speaker
 in the group ends up arriving at your ear at the same moment.
+
+An independent project, not affiliated with Music Assistant, Sendspin or the
+Open Home Foundation.
 
 ## Why
 
@@ -25,7 +28,7 @@ matters too. The timestamps agree and the room still sounds smeared.
 
 Music Assistant already has the knob to fix it — a per-player `sync_adjust`,
 integer milliseconds, −500 to +500 — but nothing measures what to put in it,
-so people pick a number by ear. SpinAlign measures it.
+so people pick a number by ear. Speaker Sync Calibrator measures it.
 
 ## How it works
 
@@ -75,7 +78,7 @@ justify.
 
 ```bash
 pip install -e ".[dev]"
-python -m spinalign.cli simulate
+python -m speaker_sync.cli simulate
 ```
 
 ```
@@ -103,25 +106,25 @@ and a certificate issued by the proxy beats one the user has to click past.
 ```bash
 pip install -e ".[ma]"
 
-export SPINALIGN_MA_URL=http://192.168.1.10:8095
-export SPINALIGN_MA_TOKEN=<token with CONFIG_PLAYERS_READ/WRITE>
-export SPINALIGN_AUDIO_BASE_URL=http://192.168.1.20:8080
-export SPINALIGN_ACCESS_TOKEN=$(openssl rand -hex 24)
+export SPEAKER_SYNC_MA_URL=http://192.168.1.10:8095
+export SPEAKER_SYNC_MA_TOKEN=<token with CONFIG_PLAYERS_READ/WRITE>
+export SPEAKER_SYNC_AUDIO_BASE_URL=http://192.168.1.20:8080
+export SPEAKER_SYNC_ACCESS_TOKEN=$(openssl rand -hex 24)
 
-spinalign serve
+speaker-sync serve
 ```
 
 | Variable | What it is |
 | --- | --- |
-| `SPINALIGN_MA_URL` | Music Assistant, as reachable **from the app** |
-| `SPINALIGN_MA_TOKEN` | needs the `CONFIG_PLAYERS_READ` / `WRITE` scopes |
-| `SPINALIGN_AUDIO_BASE_URL` | the app, as reachable **from Music Assistant** |
-| `SPINALIGN_ACCESS_TOKEN` | shared secret for the UI, API and socket |
-| `SPINALIGN_STATE_DIR` | saved positions and the probed sign; `/data` in the image |
-| `SPINALIGN_HOST` / `SPINALIGN_PORT` | bind address, default `0.0.0.0:8080` |
-| `SPINALIGN_TRUSTED_PROXY` | a proxy that authenticates users itself (HA ingress); its requests skip the token |
+| `SPEAKER_SYNC_MA_URL` | Music Assistant, as reachable **from the app** |
+| `SPEAKER_SYNC_MA_TOKEN` | needs the `CONFIG_PLAYERS_READ` / `WRITE` scopes |
+| `SPEAKER_SYNC_AUDIO_BASE_URL` | the app, as reachable **from Music Assistant** |
+| `SPEAKER_SYNC_ACCESS_TOKEN` | shared secret for the UI, API and socket |
+| `SPEAKER_SYNC_STATE_DIR` | saved positions and the probed sign; `/data` in the image |
+| `SPEAKER_SYNC_HOST` / `SPEAKER_SYNC_PORT` | bind address, default `0.0.0.0:8080` |
+| `SPEAKER_SYNC_TRUSTED_PROXY` | a proxy that authenticates users itself (HA ingress); its requests skip the token |
 
-`SPINALIGN_AUDIO_BASE_URL` is the one that catches people out, and it is
+`SPEAKER_SYNC_AUDIO_BASE_URL` is the one that catches people out, and it is
 required rather than guessed. It is *not* the address the browser uses — it is
 how Music Assistant reaches back to fetch the test track, which in a container
 is a service name or the host's LAN address, never the bridge address the app
@@ -156,7 +159,7 @@ Sync groups and other aggregates are excluded, along with disabled and hidden
 players. When a speaker is unexpectedly sitting out, ask:
 
 ```bash
-spinalign players --ma-url http://192.168.1.10:8095
+speaker-sync players --ma-url http://192.168.1.10:8095
 ```
 
 which prints each player's provider, type, `sync_adjust` and the verdict.
@@ -256,7 +259,7 @@ correct alignment rather than a replay of stale numbers.
 
 The same file remembers which way `sync_adjust` runs on your server, which is
 established by probing and costs two measurement passes — so
-`SPINALIGN_STATE_DIR` wants to be a volume. Without one, every restart forgets
+`SPEAKER_SYNC_STATE_DIR` wants to be a volume. Without one, every restart forgets
 both.
 
 ### Docker
@@ -278,18 +281,18 @@ the probed sign, and without it both are gone on every restart.
 
 This repository is also a Home Assistant add-on repository. In Home Assistant:
 **Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add
-`https://github.com/vshivtsev-dev/audio-sync`, and install **SpinAlign**.
+`https://github.com/vshivtsev-dev/audio-sync`, and install **Speaker Sync Calibrator**.
 
 Next to the Music Assistant add-on it needs no configuration beyond, at most,
 a Music Assistant token:
 
 - Music Assistant's address is looked up through the Supervisor.
-- `SPINALIGN_AUDIO_BASE_URL` becomes the add-on's own address on the internal
+- `SPEAKER_SYNC_AUDIO_BASE_URL` becomes the add-on's own address on the internal
   network, which the Music Assistant add-on can reach.
 - The UI is served through ingress, so it opens from the sidebar behind the
   Home Assistant login and its HTTPS — the secure context the microphone
   needs. Requests from the ingress proxy skip the access token
-  (`SPINALIGN_TRUSTED_PROXY`); the optional direct port still requires it.
+  (`SPEAKER_SYNC_TRUSTED_PROXY`); the optional direct port still requires it.
 
 The add-on lives in `addon/` and installs the package from this
 repository's archive at the ref named in `addon/build.yaml`. Its own
@@ -316,7 +319,7 @@ the speaker cone is tested.
 ## Layout
 
 ```
-src/spinalign/
+src/speaker_sync/
   dsp/          signal generation, arrival detection, robust statistics
   calibration/  round planning, analysis, solver, sign probe, saved positions
   ma/           the port, and the Music Assistant adapter behind it

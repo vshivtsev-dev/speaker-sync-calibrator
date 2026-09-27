@@ -11,15 +11,15 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sim.virtual_room import Round, RoomConfig, VirtualSpeaker, render_recording
-from spinalign.calibration.measure import (
+from speaker_sync.calibration.measure import (
     MeasurementAnalysis,
     RoundPlan,
     analyze,
     plan_rounds,
     total_chirps,
 )
-from spinalign.dsp.detect import Arrival, detect_arrivals
-from spinalign.dsp.signals import exponential_sweep
+from speaker_sync.dsp.detect import Arrival, detect_arrivals
+from speaker_sync.dsp.signals import exponential_sweep
 
 
 @dataclass(frozen=True)

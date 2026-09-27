@@ -29,14 +29,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from spinalign.calibration.session import CalibrationReport
-from spinalign.calibration.solver import CalibrationSolution, PlayerMeasurement, solve
-from spinalign.ma.backend import SpeakerBackend
+from speaker_sync.calibration.session import CalibrationReport
+from speaker_sync.calibration.solver import CalibrationSolution, PlayerMeasurement, solve
+from speaker_sync.ma.backend import SpeakerBackend
 
 STATE_FILE = "state.json"
 STATE_VERSION = 1
 
-logger = logging.getLogger("spinalign.profiles")
+logger = logging.getLogger("speaker_sync.profiles")
 
 
 @dataclass(frozen=True)

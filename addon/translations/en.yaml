@@ -10,7 +10,7 @@ configuration:
       A long-lived token created in Music Assistant, needed when its server
       requires authentication.
   audio_base_url:
-    name: Address Music Assistant uses to reach SpinAlign
+    name: Address Music Assistant uses to reach Speaker Sync Calibrator
     description: >-
       Leave empty when Music Assistant is the add-on. Set it when Music
       Assistant runs elsewhere: then map port 8080 and enter

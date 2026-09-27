@@ -13,14 +13,14 @@ import numpy as np
 import pytest
 
 from sim.virtual_room import VirtualSpeaker
-from spinalign.dsp.detect import (
+from speaker_sync.dsp.detect import (
     correlation_envelope,
     detect_arrivals,
     detection_threshold,
     estimate_noise_floor,
     find_first_arrival,
 )
-from spinalign.dsp.signals import build_test_signal, exponential_sweep, to_wav_bytes
+from speaker_sync.dsp.signals import build_test_signal, exponential_sweep, to_wav_bytes
 from tests.support import run_session, three_speakers
 
 REFERENCE = "a"

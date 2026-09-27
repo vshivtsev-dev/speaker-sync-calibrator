@@ -16,14 +16,14 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from spinalign.calibration.session import (
+from speaker_sync.calibration.session import (
     Recorder,
     SessionConfig,
     Sleeper,
     measure_once,
 )
-from spinalign.calibration.solver import SYNC_ADJUST_LIMIT_MS
-from spinalign.ma.backend import SpeakerBackend
+from speaker_sync.calibration.solver import SYNC_ADJUST_LIMIT_MS
+from speaker_sync.ma.backend import SpeakerBackend
 
 DEFAULT_PROBE_MS = 100
 

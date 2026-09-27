@@ -17,8 +17,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from spinalign.dsp.analysis import RobustEstimate, robust_estimate, samples_to_ms
-from spinalign.dsp.detect import Arrival
+from speaker_sync.dsp.analysis import RobustEstimate, robust_estimate, samples_to_ms
+from speaker_sync.dsp.detect import Arrival
 
 DEFAULT_CHIRPS_PER_ROUND = 5
 DEFAULT_GUARD_CHIRPS = 2

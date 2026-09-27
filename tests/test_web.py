@@ -22,10 +22,10 @@ from sim.fake_ma import (
     VirtualClock,
     mixed_speakers,
 )
-from spinalign.calibration.profiles import ProfileStore
-from spinalign.calibration.session import SessionConfig, calibrate
-from spinalign.ma.backend import PlayerInfo
-from spinalign.web.app import (
+from speaker_sync.calibration.profiles import ProfileStore
+from speaker_sync.calibration.session import SessionConfig, calibrate
+from speaker_sync.ma.backend import PlayerInfo
+from speaker_sync.web.app import (
     MAX_CHIRPS_PER_ROUND,
     MIN_CHIRPS_PER_ROUND,
     TOKEN_COOKIE,
@@ -41,7 +41,7 @@ def make_state(**overrides) -> AppState:
     return AppState(
         backend=FakeMusicAssistant(speakers=mixed_speakers(), clock=VirtualClock()),
         session_config=SessionConfig(),
-        audio_base_url="http://spinalign:8080",
+        audio_base_url="http://speaker-sync:8080",
         **overrides,
     )
 
@@ -112,7 +112,7 @@ async def test_signal_url_points_at_the_configured_address(state):
     uses, so it comes from configuration rather than from the request."""
     signal = state.session_config.build_signal(20)
 
-    assert state.signal_url(signal) == "http://spinalign:8080/signal.wav?chirps=20"
+    assert state.signal_url(signal) == "http://speaker-sync:8080/signal.wav?chirps=20"
 
 
 # ------------------------------------------------------------------- the app
@@ -173,7 +173,7 @@ async def test_ui_and_health_are_served(state):
     finally:
         await client.close()
 
-    assert "SpinAlign" in page
+    assert "Speaker Sync Calibrator" in page
     assert health == {"status": "ok"}
     # The recorder must not fall back to MediaRecorder, whose encoder delay
     # would corrupt the very thing being measured.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from spinalign.addon import INGRESS_PROXY, load_access_token, resolve
+from speaker_sync.addon import INGRESS_PROXY, load_access_token, resolve
 
 MA_ON_HOST_NETWORK = {"ip_address": "172.30.32.1", "state": "started"}
 SELF = {"ip_address": "172.30.33.7"}
@@ -21,10 +21,10 @@ def test_music_assistant_and_own_address_are_discovered(tmp_path):
         tmp_path / "access_token",
     )
 
-    assert env["SPINALIGN_MA_URL"] == "http://172.30.32.1:8095"
-    assert env["SPINALIGN_AUDIO_BASE_URL"] == "http://172.30.33.7:8080"
-    assert env["SPINALIGN_TRUSTED_PROXY"] == INGRESS_PROXY
-    assert env["SPINALIGN_STATE_DIR"] == str(tmp_path)
+    assert env["SPEAKER_SYNC_MA_URL"] == "http://172.30.32.1:8095"
+    assert env["SPEAKER_SYNC_AUDIO_BASE_URL"] == "http://172.30.33.7:8080"
+    assert env["SPEAKER_SYNC_TRUSTED_PROXY"] == INGRESS_PROXY
+    assert env["SPEAKER_SYNC_STATE_DIR"] == str(tmp_path)
 
 
 def test_the_beta_add_on_is_found_too(tmp_path):
@@ -33,7 +33,7 @@ def test_the_beta_add_on_is_found_too(tmp_path):
         supervisor(d5369777_music_assistant_beta=MA_ON_HOST_NETWORK, self=SELF),
         tmp_path / "access_token",
     )
-    assert env["SPINALIGN_MA_URL"] == "http://172.30.32.1:8095"
+    assert env["SPEAKER_SYNC_MA_URL"] == "http://172.30.32.1:8095"
 
 
 def test_options_win_over_discovery(tmp_path):
@@ -48,10 +48,10 @@ def test_options_win_over_discovery(tmp_path):
         tmp_path / "access_token",
     )
 
-    assert env["SPINALIGN_MA_URL"] == "http://192.168.1.10:8095"
-    assert env["SPINALIGN_MA_TOKEN"] == "abc"
-    assert env["SPINALIGN_AUDIO_BASE_URL"] == "http://192.168.1.20:8080"
-    assert env["SPINALIGN_ACCESS_TOKEN"] == "chosen"
+    assert env["SPEAKER_SYNC_MA_URL"] == "http://192.168.1.10:8095"
+    assert env["SPEAKER_SYNC_MA_TOKEN"] == "abc"
+    assert env["SPEAKER_SYNC_AUDIO_BASE_URL"] == "http://192.168.1.20:8080"
+    assert env["SPEAKER_SYNC_ACCESS_TOKEN"] == "chosen"
     assert not (tmp_path / "access_token").exists()
 
 

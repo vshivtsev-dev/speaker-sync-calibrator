@@ -5,9 +5,9 @@ FROM python:3.11-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    SPINALIGN_HOST=0.0.0.0 \
-    SPINALIGN_PORT=8080 \
-    SPINALIGN_STATE_DIR=/data
+    SPEAKER_SYNC_HOST=0.0.0.0 \
+    SPEAKER_SYNC_PORT=8080 \
+    SPEAKER_SYNC_STATE_DIR=/data
 
 WORKDIR /app
 
@@ -15,11 +15,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 RUN pip install --no-cache-dir ".[ma]" \
-    && useradd --create-home --uid 10001 spinalign \
+    && useradd --create-home --uid 10001 speaker-sync \
     && mkdir -p /data \
-    && chown spinalign /data
+    && chown speaker-sync /data
 
-USER spinalign
+USER speaker-sync
 
 # Saved listening positions and the probed sync_adjust sign. Mount a volume
 # here: without one they are lost on every restart, and re-establishing the
@@ -37,4 +37,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3).status == 200 else 1)"
 
 # TLS is the reverse proxy's job — this speaks plain HTTP.
-CMD ["spinalign", "serve"]
+CMD ["speaker-sync", "serve"]

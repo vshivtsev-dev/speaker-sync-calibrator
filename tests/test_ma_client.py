@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from spinalign.ma.client import MusicAssistantBackend
+from speaker_sync.ma.client import MusicAssistantBackend
 
 
 @dataclass
@@ -483,14 +483,14 @@ async def test_an_unreachable_track_names_the_setting_to_change(backend):
     that exposes a wrong audio base URL — and it reports it as an ffmpeg probe
     failure, which says nothing about what to change."""
     adapter, client = backend
-    url = "http://spinalign:8080/signal.wav?chirps=15"
+    url = "http://speaker-sync:8080/signal.wav?chirps=15"
     client.player_queues.refuse = f"Unable to retrieve info for {url} (Input/output error)"
 
     with pytest.raises(RuntimeError) as caught:
         await adapter.play_url("esp32", url)
 
     message = str(caught.value)
-    assert "SPINALIGN_AUDIO_BASE_URL" in message
+    assert "SPEAKER_SYNC_AUDIO_BASE_URL" in message
     assert url in message
     # The original wording survives, so the diagnosis is not thrown away.
     assert "Input/output error" in message
@@ -499,7 +499,7 @@ async def test_an_unreachable_track_names_the_setting_to_change(backend):
 @pytest.mark.parametrize(
     "reported",
     [
-        "Cannot connect to host spinalign:8080",
+        "Cannot connect to host speaker-sync:8080",
         "Temporary failure in name resolution",
         "Connection refused",
     ],
@@ -508,7 +508,7 @@ async def test_the_other_ways_a_fetch_fails_are_recognised_too(backend, reported
     adapter, client = backend
     client.player_queues.refuse = reported
 
-    with pytest.raises(RuntimeError, match="SPINALIGN_AUDIO_BASE_URL"):
+    with pytest.raises(RuntimeError, match="SPEAKER_SYNC_AUDIO_BASE_URL"):
         await adapter.play_url("esp32", "http://host/signal.wav?chirps=15")
 
 

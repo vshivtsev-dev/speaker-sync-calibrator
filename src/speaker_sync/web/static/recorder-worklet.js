@@ -42,4 +42,4 @@ class RecorderProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('spinalign-recorder', RecorderProcessor);
+registerProcessor('speaker-sync-recorder', RecorderProcessor);

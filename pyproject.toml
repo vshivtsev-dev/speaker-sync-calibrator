@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spinalign"
+name = "speaker-sync"
 version = "0.1.0"
 description = "Acoustic latency calibration for Music Assistant / Sendspin multi-room speakers"
 readme = "README.md"
@@ -23,13 +23,13 @@ ma = ["music-assistant-client>=1.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [project.scripts]
-spinalign = "spinalign.cli:main"
+speaker-sync = "speaker_sync.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-spinalign = ["web/static/*"]
+speaker_sync = ["web/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

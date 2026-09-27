@@ -21,20 +21,20 @@ from typing import Protocol
 
 import numpy as np
 
-from spinalign.calibration.measure import (
+from speaker_sync.calibration.measure import (
     MeasurementAnalysis,
     RoundPlan,
     analyze,
     plan_rounds,
     total_chirps,
 )
-from spinalign.calibration.solver import (
+from speaker_sync.calibration.solver import (
     CalibrationSolution,
     PlayerMeasurement,
     solve,
 )
-from spinalign.dsp.detect import detect_arrivals
-from spinalign.dsp.signals import (
+from speaker_sync.dsp.detect import detect_arrivals
+from speaker_sync.dsp.signals import (
     DEFAULT_CHIRP_SECONDS,
     DEFAULT_F_END,
     DEFAULT_F_START,
@@ -43,7 +43,7 @@ from spinalign.dsp.signals import (
     TestSignal,
     build_test_signal,
 )
-from spinalign.ma.backend import PlayerInfo, SpeakerBackend
+from speaker_sync.ma.backend import PlayerInfo, SpeakerBackend
 
 Sleeper = Callable[[float], Awaitable[None]]
 
@@ -87,7 +87,7 @@ class SessionConfig:
     per speaker: enough for the median to shrug off a single bad one, and a
     ~26 s pass for three speakers. Raising it buys margin in two places at
     once — the median gets harder to move, and the outlier check in
-    :mod:`spinalign.calibration.measure` gets more evidence to notice a glitch
+    :mod:`speaker_sync.calibration.measure` gets more evidence to notice a glitch
     with — at a directly proportional cost in session length, doubled because
     the run is measured and then verified.
     """
@@ -439,7 +439,7 @@ def observed_convention(
     went in, and the arrival times moved. Comparing two speakers rather than
     looking at one in isolation is what makes it readable — each pass has its
     own arbitrary origin, and the difference between two speakers cancels it,
-    exactly as the dedicated probe in :mod:`spinalign.calibration.validate`
+    exactly as the dedicated probe in :mod:`speaker_sync.calibration.validate`
     does.
 
     Returns ``1`` when a positive correction delays a player, ``-1`` when it

@@ -1,6 +1,6 @@
-name: SpinAlign
+name: Speaker Sync Calibrator
 version: "0.1.0"
-slug: spinalign
+slug: speaker_sync_calibrator
 description: Acoustic latency calibration for Music Assistant multi-room speakers
 url: https://github.com/vshivtsev-dev/audio-sync
 # numpy and scipy publish wheels for these two only; anything else would have
@@ -17,7 +17,7 @@ boot: auto
 ingress: true
 ingress_port: 8080
 panel_icon: mdi:speaker-multiple
-panel_title: SpinAlign
+panel_title: Speaker Sync Calibrator
 
 # Read-only lookups of the Music Assistant add-on and of this one, to find
 # both addresses without asking.

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from spinalign.dsp.signals import (
+from speaker_sync.dsp.signals import (
     DEFAULT_CHIRP_SECONDS,
     DEFAULT_F_END,
     DEFAULT_F_START,

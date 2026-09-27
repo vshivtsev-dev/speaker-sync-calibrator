@@ -11,7 +11,7 @@ dist/
 htmlcov/
 
 # Generated at runtime: saved calibration profiles.
-/.spinalign/
+/.speaker-sync/
 
 # Local deployment secrets; .env.example is the template that is tracked.
 .env
