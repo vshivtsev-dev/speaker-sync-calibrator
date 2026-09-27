@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
+from speaker_sync.i18n import say
+
 SENDSPIN_PROVIDER = "sendspin"
 
 # Music Assistant's per-player sync correction, in milliseconds.
@@ -171,7 +173,7 @@ class PlayerInfo:
         arrival times of the same stream, so whatever synchronisation error a
         protocol introduces is simply part of what gets measured and corrected
         — as long as it is stable, and the outlier check in
-        :mod:`spinalign.calibration.measure` is what notices when it is not.
+        :mod:`speaker_sync.calibration.measure` is what notices when it is not.
         Sendspin gives the tightest guarantee, which is worth telling the user
         about, but demanding it excluded every speaker on real systems where
         the same devices are exposed through another provider.
@@ -204,24 +206,24 @@ class PlayerInfo:
         """Why this player is sitting out, in words the UI can show.
 
         The manual switch is reported ahead of everything else. It is the one
-        reason the user can act on immediately, and hiding it behind "недоступна"
+        reason the user can act on immediately, and hiding it behind "unavailable"
         would leave them flipping a switch whose state they cannot see.
         """
         if self.is_calibratable:
             return None
         if not self.user_enabled:
-            return "выключена вручную"
+            return say(en="switched off here", ru="выключена вручную")
         if not self.enabled:
-            return "выключена в Music Assistant"
+            return say(en="disabled in Music Assistant", ru="выключена в Music Assistant")
         if not self.available:
-            return "недоступна"
+            return say(en="unavailable", ru="недоступна")
         if not self.renders_audio:
-            return "группа, а не колонка"
+            return say(en="a group, not a speaker", ru="группа, а не колонка")
         if self.hidden:
-            return "скрыта в Music Assistant"
+            return say(en="hidden in Music Assistant", ru="скрыта в Music Assistant")
         if self.config_error:
-            return "не удалось прочитать настройки"
-        return "нет настройки задержки"
+            return say(en="its settings could not be read", ru="не удалось прочитать настройки")
+        return say(en="no delay setting", ru="нет настройки задержки")
 
 
 @dataclass(frozen=True)
@@ -253,7 +255,10 @@ class SelectedSpeakers:
     async def set_sync_adjust(self, player_id: str, milliseconds: int) -> None:
         if player_id in self.disabled:
             raise ValueError(
-                f"{player_id} is switched off by hand, so its delay is left alone"
+                say(
+                    en=f"{player_id} is switched off here, so its delay is left alone",
+                    ru=f"{player_id} выключена вручную, её задержка не меняется",
+                )
             )
         await self.inner.set_sync_adjust(player_id, milliseconds)
 

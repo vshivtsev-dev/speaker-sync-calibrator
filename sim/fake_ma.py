@@ -18,8 +18,8 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from sim.virtual_room import Round, RoomConfig, VirtualSpeaker, render_recording
-from spinalign.dsp.signals import exponential_sweep
-from spinalign.ma.backend import SENDSPIN_PROVIDER, PlayerInfo
+from speaker_sync.dsp.signals import exponential_sweep
+from speaker_sync.ma.backend import SENDSPIN_PROVIDER, PlayerInfo
 
 
 class VirtualClock:
@@ -41,7 +41,7 @@ class _MuteEvent:
 
 @dataclass
 class FakeMusicAssistant:
-    """Implements :class:`spinalign.ma.backend.SpeakerBackend` over the room."""
+    """Implements :class:`speaker_sync.ma.backend.SpeakerBackend` over the room."""
 
     speakers: list[VirtualSpeaker]
     clock: VirtualClock = field(default_factory=VirtualClock)

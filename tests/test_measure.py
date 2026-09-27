@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from spinalign.calibration.measure import analyze, plan_rounds, total_chirps
-from spinalign.dsp.analysis import ms_to_samples
-from spinalign.dsp.detect import Arrival
+from speaker_sync.calibration.measure import analyze, plan_rounds, total_chirps
+from speaker_sync.dsp.analysis import ms_to_samples
+from speaker_sync.dsp.detect import Arrival
 
 RATE = 48000
 

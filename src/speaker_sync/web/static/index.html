@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>SpinAlign</title>
+<title>Speaker Sync Calibrator</title>
 <style>
   :root {
     --bg: #f6f7f9;
@@ -170,71 +170,62 @@
 </head>
 <body>
 <main>
-  <h1>SpinAlign</h1>
-  <p class="sub">Выравнивание задержек колонок по микрофону телефона</p>
+  <h1>Speaker Sync Calibrator</h1>
+  <p class="sub" data-i18n="tagline"></p>
+  <p class="sub" id="popout" hidden>
+    <span data-i18n="popout_text"></span>
+    <a href="." target="_blank" rel="noopener" data-i18n="popout_link"></a>.
+  </p>
 
   <div class="card">
-    <h2>Колонки</h2>
-    <table id="players"><tbody><tr><td colspan="3">Загрузка…</td></tr></tbody></table>
-    <p class="note">
-      Выключенную колонку калибровка не трогает: её не замеряют, в группу не берут
-      и задержку ей не меняют. Пригодится для сабвуфера, колонки в другой комнате
-      или той, что настроена вручную.
-    </p>
+    <h2 data-i18n="speakers"></h2>
+    <table id="players"><tbody><tr><td colspan="3" data-i18n="loading"></td></tr></tbody></table>
+    <p class="note" data-i18n="switch_note"></p>
   </div>
 
   <div class="card">
     <div class="status">
       <span class="dot" id="dot"></span>
-      <span id="status">Положите телефон туда, где слушаете, и нажмите «Калибровать».</span>
+      <span id="status" data-i18n="idle"></span>
     </div>
     <div class="bar"><i id="bar"></i></div>
     <div class="setting">
-      <label for="chirps">Свистов на колонку</label>
+      <label for="chirps" data-i18n="chirps_label"></label>
       <input id="chirps" type="number" min="3" max="40" step="1" inputmode="numeric">
       <span class="sub" id="chirps-note">&nbsp;</span>
     </div>
 
     <div style="margin-top:14px">
-      <button id="run">Калибровать</button>
-      <button id="probe" class="secondary">Проверить знак sync_adjust</button>
+      <button id="run" data-i18n="run"></button>
+      <button id="probe" class="secondary" data-i18n="probe"></button>
     </div>
-    <p class="note">
-      Во время замера будет тихо, потом колонки по очереди издадут короткие свисты.
-      Не двигайте телефон и старайтесь не шуметь. То, что играло, остановится:
-      трек ставится в очередь как обычное воспроизведение — только так работают
-      мьют и группа, на которых держится замер.
-    </p>
+    <p class="note" data-i18n="run_note"></p>
   </div>
 
   <div class="card hidden" id="result">
-    <h2>Результат</h2>
+    <h2 data-i18n="result"></h2>
     <div>
       <span class="headline" id="before">—</span>
       <span class="arrow">→</span>
       <span class="headline" id="after">—</span>
-      <span class="sub" style="margin:0">мс разброса</span>
+      <span class="sub" style="margin:0" data-i18n="ms_spread"></span>
     </div>
     <table id="corrections" style="margin-top:14px"></table>
     <div id="notes"></div>
 
     <div class="saverow">
-      <input id="save-name" type="text" placeholder="Название позиции, например «диван»"
+      <input id="save-name" type="text" data-i18n-placeholder="save_placeholder"
              autocomplete="off" maxlength="60">
-      <button id="save" class="secondary">Сохранить</button>
+      <button id="save" class="secondary" data-i18n="save"></button>
     </div>
   </div>
 
   <div class="card" id="profiles-card">
-    <h2>Позиции</h2>
-    <p class="note" style="margin-top:0">
-      Калибровка привязана к точке, где стоял телефон: компенсируется в том числе
-      путь звука по воздуху. Для дивана и кухни нужны разные поправки — сохранённую
-      позицию можно применить без нового замера.
-    </p>
+    <h2 data-i18n="positions"></h2>
+    <p class="note" style="margin-top:0" data-i18n="positions_note"></p>
     <table id="profiles"></table>
   </div>
 </main>
-<script src="/static/app.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>

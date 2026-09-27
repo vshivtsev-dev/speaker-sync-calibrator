@@ -6,9 +6,9 @@
 # access in a secure context, so the phone needs a trusted https:// origin.
 
 services:
-  spinalign:
+  speaker-sync:
     build: .
-    image: spinalign:latest
+    image: speaker-sync:latest
     restart: unless-stopped
 
     ports:
@@ -16,8 +16,8 @@ services:
 
     environment:
       # Music Assistant, as reachable from this container.
-      SPINALIGN_MA_URL: ${SPINALIGN_MA_URL:?set the Music Assistant URL, e.g. http://192.168.1.10:8095}
-      SPINALIGN_MA_TOKEN: ${SPINALIGN_MA_TOKEN:-}
+      SPEAKER_SYNC_MA_URL: ${SPEAKER_SYNC_MA_URL:?set the Music Assistant URL, e.g. http://192.168.1.10:8095}
+      SPEAKER_SYNC_MA_TOKEN: ${SPEAKER_SYNC_MA_TOKEN:-}
 
       # The reverse of the line above: how MUSIC ASSISTANT reaches *us* to
       # fetch the test track. This is not the address the browser uses. If MA
@@ -25,17 +25,17 @@ services:
       # it runs on the host or another machine, use the host's LAN address. It
       # is required on purpose — a guess here fails halfway through a
       # calibration, with every speaker muted, rather than at startup.
-      SPINALIGN_AUDIO_BASE_URL: ${SPINALIGN_AUDIO_BASE_URL:?set the address Music Assistant can reach this app on}
+      SPEAKER_SYNC_AUDIO_BASE_URL: ${SPEAKER_SYNC_AUDIO_BASE_URL:?set the address Music Assistant can reach this app on}
 
       # Without this, anyone who reaches the app can enumerate the speakers and
       # start a calibration — loud test tones and rewritten sync_adjust.
-      SPINALIGN_ACCESS_TOKEN: ${SPINALIGN_ACCESS_TOKEN:?generate one, e.g. openssl rand -hex 24}
+      SPEAKER_SYNC_ACCESS_TOKEN: ${SPEAKER_SYNC_ACCESS_TOKEN:?generate one, e.g. openssl rand -hex 24}
 
     volumes:
       # Saved listening positions and the probed sync_adjust sign. Without
       # this they are lost on every restart, and re-establishing the sign
       # costs two full measurement passes.
-      - spinalign-state:/data
+      - speaker-sync-state:/data
 
 volumes:
-  spinalign-state:
+  speaker-sync-state:

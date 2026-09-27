@@ -17,8 +17,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from spinalign.dsp.analysis import RobustEstimate, robust_estimate, samples_to_ms
-from spinalign.dsp.detect import Arrival
+from speaker_sync.dsp.analysis import RobustEstimate, robust_estimate, samples_to_ms
+from speaker_sync.dsp.detect import Arrival
+from speaker_sync.i18n import say
 
 DEFAULT_CHIRPS_PER_ROUND = 5
 DEFAULT_GUARD_CHIRPS = 2
@@ -125,7 +126,7 @@ def analyze(
     reference speaker audible, so chirp zero is reliably present.
     """
     if not arrivals:
-        return MeasurementAnalysis({}, 0.0, ("в записи не найдено ни одного свиста",))
+        return MeasurementAnalysis({}, 0.0, (say(en="no chirps were found in the recording", ru="в записи не найдено ни одного свиста"),))
 
     offset = min(a.chirp_index for a in arrivals)
     by_chirp = {a.chirp_index - offset: a for a in arrivals}
@@ -143,7 +144,12 @@ def analyze(
         ]
         per_round.append((plan, readings_in_round))
         if not readings_in_round:
-            problems.append(f"{plan.player_id}: не слышно ни одного свиста в своём круге")
+            problems.append(
+                say(
+                    en=f"{plan.player_id}: no chirp was heard in its round",
+                    ru=f"{plan.player_id}: не слышно ни одного свиста в своём круге",
+                )
+            )
 
     drift_rate, drift_origin, drift_total = _estimate_drift(per_round)
 
@@ -166,8 +172,12 @@ def analyze(
         )
         if worst_ms > OUTLIER_TOLERANCE_MS:
             problems.append(
-                f"{plan.player_id}: один отсчёт отличается от остальных на {worst_ms:.1f} мс — "
-                "в этом круге сбоила запись или поток"
+                say(
+                    en=f"{plan.player_id}: one reading is {worst_ms:.1f} ms off the others — "
+                    "the recording or the stream glitched in this round",
+                    ru=f"{plan.player_id}: один отсчёт отличается от остальных на {worst_ms:.1f} мс — "
+                    "в этом круге сбоила запись или поток",
+                )
             )
 
         readings[plan.player_id] = SpeakerReading(
@@ -179,7 +189,12 @@ def analyze(
         )
 
     if len(readings) < 2:
-        problems.append("годный отсчёт дала меньше чем одна пара колонок")
+        problems.append(
+            say(
+                en="fewer than two speakers gave a usable reading",
+                ru="годный отсчёт дала меньше чем одна пара колонок",
+            )
+        )
 
     return MeasurementAnalysis(
         readings=readings,

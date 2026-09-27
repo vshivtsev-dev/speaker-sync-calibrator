@@ -13,11 +13,11 @@ htmlcov
 .coverage
 
 # Development only: the simulator and its tests are not part of the shipped
-# package, and `spinalign simulate` is a source-checkout tool.
+# package, and `speaker-sync simulate` is a source-checkout tool.
 tests
 sim
 conftest.py
 
 *.pem
-.spinalign
+.speaker-sync
 docker-compose.yml

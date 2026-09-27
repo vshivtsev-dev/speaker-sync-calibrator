@@ -8,12 +8,12 @@ import os
 import sys
 from pathlib import Path
 
-from spinalign.calibration.session import CalibrationReport, SessionConfig
+from speaker_sync.calibration.session import CalibrationReport, SessionConfig
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="spinalign",
+        prog="speaker-sync",
         description="Acoustic latency calibration for Music Assistant / Sendspin speakers.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
@@ -24,40 +24,58 @@ def main(argv: list[str] | None = None) -> int:
     serve = commands.add_parser("serve", help="run the web UI against a Music Assistant server")
     serve.add_argument(
         "--ma-url",
-        default=os.environ.get("SPINALIGN_MA_URL"),
-        help="Music Assistant, e.g. http://192.168.1.10:8095  [SPINALIGN_MA_URL]",
+        default=os.environ.get("SPEAKER_SYNC_MA_URL"),
+        help="Music Assistant, e.g. http://192.168.1.10:8095  [SPEAKER_SYNC_MA_URL]",
     )
     serve.add_argument(
         "--token",
-        default=os.environ.get("SPINALIGN_MA_TOKEN"),
-        help="Music Assistant token with CONFIG_PLAYERS_READ/WRITE  [SPINALIGN_MA_TOKEN]",
+        default=os.environ.get("SPEAKER_SYNC_MA_TOKEN"),
+        help="Music Assistant token with CONFIG_PLAYERS_READ/WRITE  [SPEAKER_SYNC_MA_TOKEN]",
     )
     serve.add_argument(
         "--audio-base-url",
-        default=os.environ.get("SPINALIGN_AUDIO_BASE_URL"),
+        default=os.environ.get("SPEAKER_SYNC_AUDIO_BASE_URL"),
         help=(
             "where MUSIC ASSISTANT reaches this app to fetch the test track — "
             "a Docker service name or the host's LAN address, not the browser's "
-            "address  [SPINALIGN_AUDIO_BASE_URL]"
+            "address  [SPEAKER_SYNC_AUDIO_BASE_URL]"
         ),
     )
     serve.add_argument(
         "--access-token",
-        default=os.environ.get("SPINALIGN_ACCESS_TOKEN"),
-        help="shared secret protecting the UI, API and socket  [SPINALIGN_ACCESS_TOKEN]",
+        default=os.environ.get("SPEAKER_SYNC_ACCESS_TOKEN"),
+        help="shared secret protecting the UI, API and socket  [SPEAKER_SYNC_ACCESS_TOKEN]",
+    )
+    serve.add_argument(
+        "--trusted-proxy",
+        default=os.environ.get("SPEAKER_SYNC_TRUSTED_PROXY"),
+        help=(
+            "address of a proxy that has already authenticated its users, such "
+            "as Home Assistant's ingress; its requests skip the access token  "
+            "[SPEAKER_SYNC_TRUSTED_PROXY]"
+        ),
+    )
+    serve.add_argument(
+        "--language",
+        choices=("auto", "en", "ru"),
+        default=os.environ.get("SPEAKER_SYNC_LANGUAGE", "auto").strip().lower() or "auto",
+        help=(
+            "language of the UI and its messages; auto follows each browser, "
+            "falling back to English  [SPEAKER_SYNC_LANGUAGE]"
+        ),
     )
     serve.add_argument(
         "--state-dir",
         type=Path,
-        default=Path(os.environ.get("SPINALIGN_STATE_DIR", Path.home() / ".spinalign")),
+        default=Path(os.environ.get("SPEAKER_SYNC_STATE_DIR", Path.home() / ".speaker-sync")),
         help=(
             "where saved positions and the probed sync_adjust sign live; needs "
             "to be a volume in a container or both are lost on restart "
-            "[SPINALIGN_STATE_DIR]"
+            "[SPEAKER_SYNC_STATE_DIR]"
         ),
     )
-    serve.add_argument("--host", default=os.environ.get("SPINALIGN_HOST", "0.0.0.0"))
-    serve.add_argument("--port", type=int, default=int(os.environ.get("SPINALIGN_PORT", "8080")))
+    serve.add_argument("--host", default=os.environ.get("SPEAKER_SYNC_HOST", "0.0.0.0"))
+    serve.add_argument("--port", type=int, default=int(os.environ.get("SPEAKER_SYNC_PORT", "8080")))
 
     simulate = commands.add_parser(
         "simulate", help="run a full calibration against a simulated room (no hardware)"
@@ -68,8 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     inspect = commands.add_parser(
         "players", help="dump everything Music Assistant reports about each player"
     )
-    inspect.add_argument("--ma-url", default=os.environ.get("SPINALIGN_MA_URL"))
-    inspect.add_argument("--token", default=os.environ.get("SPINALIGN_MA_TOKEN"))
+    inspect.add_argument("--ma-url", default=os.environ.get("SPEAKER_SYNC_MA_URL"))
+    inspect.add_argument("--token", default=os.environ.get("SPEAKER_SYNC_MA_TOKEN"))
     inspect.add_argument(
         "--keys",
         action="store_true",
@@ -94,14 +112,14 @@ def main(argv: list[str] | None = None) -> int:
 
 
 async def _serve(args) -> int:
-    from spinalign.ma.client import MusicAssistantBackend
-    from spinalign.web.app import AppState, serve
+    from speaker_sync.ma.client import MusicAssistantBackend
+    from speaker_sync.web.app import AppState, serve
 
     missing_config = [
         name
         for name, value in (
-            ("--ma-url / SPINALIGN_MA_URL", args.ma_url),
-            ("--audio-base-url / SPINALIGN_AUDIO_BASE_URL", args.audio_base_url),
+            ("--ma-url / SPEAKER_SYNC_MA_URL", args.ma_url),
+            ("--audio-base-url / SPEAKER_SYNC_AUDIO_BASE_URL", args.audio_base_url),
         )
         if not value
     ]
@@ -135,9 +153,11 @@ async def _serve(args) -> int:
         session_config=SessionConfig(),
         audio_base_url=args.audio_base_url.rstrip("/"),
         access_token=args.access_token or None,
+        trusted_proxy=args.trusted_proxy or None,
+        language=args.language,
     )
 
-    from spinalign.calibration.profiles import ProfileStore
+    from speaker_sync.calibration.profiles import ProfileStore
 
     try:
         state.adopt_store(ProfileStore.open(args.state_dir))
@@ -156,10 +176,10 @@ async def _players(args) -> int:
     so when a speaker is unexpectedly sitting out, the fastest way to find out
     why is to look at the raw values rather than guess at them.
     """
-    from spinalign.ma.client import MusicAssistantBackend
+    from speaker_sync.ma.client import MusicAssistantBackend
 
     if not args.ma_url:
-        print("Missing --ma-url / SPINALIGN_MA_URL", file=sys.stderr)
+        print("Missing --ma-url / SPEAKER_SYNC_MA_URL", file=sys.stderr)
         return 2
 
     try:
@@ -212,8 +232,8 @@ async def _simulate(args) -> int:
         )
         return 1
 
-    from spinalign.calibration.session import calibrate
-    from spinalign.calibration.validate import determine_sign
+    from speaker_sync.calibration.session import calibrate
+    from speaker_sync.calibration.validate import determine_sign
 
     speakers = fake.mixed_speakers()
     if args.reflections:
@@ -289,7 +309,7 @@ def _format_report(report: CalibrationReport) -> str:
 
 
 def _write_signal(args) -> int:
-    from spinalign.dsp.signals import build_test_signal, to_wav_bytes
+    from speaker_sync.dsp.signals import build_test_signal, to_wav_bytes
 
     signal = build_test_signal(chirp_count=args.chirps)
     args.out.write_bytes(to_wav_bytes(signal.samples, signal.sample_rate))

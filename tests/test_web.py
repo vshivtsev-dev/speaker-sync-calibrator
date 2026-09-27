@@ -22,10 +22,10 @@ from sim.fake_ma import (
     VirtualClock,
     mixed_speakers,
 )
-from spinalign.calibration.profiles import ProfileStore
-from spinalign.calibration.session import SessionConfig, calibrate
-from spinalign.ma.backend import PlayerInfo
-from spinalign.web.app import (
+from speaker_sync.calibration.profiles import ProfileStore
+from speaker_sync.calibration.session import SessionConfig, calibrate
+from speaker_sync.ma.backend import PlayerInfo
+from speaker_sync.web.app import (
     MAX_CHIRPS_PER_ROUND,
     MIN_CHIRPS_PER_ROUND,
     TOKEN_COOKIE,
@@ -41,7 +41,7 @@ def make_state(**overrides) -> AppState:
     return AppState(
         backend=FakeMusicAssistant(speakers=mixed_speakers(), clock=VirtualClock()),
         session_config=SessionConfig(),
-        audio_base_url="http://spinalign:8080",
+        audio_base_url="http://speaker-sync:8080",
         **overrides,
     )
 
@@ -112,7 +112,7 @@ async def test_signal_url_points_at_the_configured_address(state):
     uses, so it comes from configuration rather than from the request."""
     signal = state.session_config.build_signal(20)
 
-    assert state.signal_url(signal) == "http://spinalign:8080/signal.wav?chirps=20"
+    assert state.signal_url(signal) == "http://speaker-sync:8080/signal.wav?chirps=20"
 
 
 # ------------------------------------------------------------------- the app
@@ -143,25 +143,54 @@ async def test_players_from_another_provider_are_still_offered(state):
     assert all(p["calibratable"] for p in payload["players"])
 
 
+EXCLUDED_PLAYERS = [
+    PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
+    PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
+    PlayerInfo("off", "Выключена", "universal_player", available=False),
+]
+
+
+async def reasons_for(state, **headers) -> dict:
+    state.backend.extra_players = list(EXCLUDED_PLAYERS)
+    client = await client_for(create_app(state))
+    try:
+        payload = await (await client.get("/api/players", headers=headers)).json()
+    finally:
+        await client.close()
+    return {p["name"]: p["excluded_because"] for p in payload["players"]}
+
+
 async def test_an_excluded_player_says_why(state):
     """The list is the only place a user can find out why a speaker is sitting
     out, so the reason travels with it."""
-    state.backend.extra_players = [
-        PlayerInfo("sync", "Везде", "sync_group", sync_adjust_key=None),
-        PlayerInfo("odd", "Без настройки", "universal_player", sync_adjust_key=None),
-        PlayerInfo("off", "Выключена", "universal_player", available=False),
-    ]
-    client = await client_for(create_app(state))
-    try:
-        payload = await (await client.get("/api/players")).json()
-    finally:
-        await client.close()
+    reasons = await reasons_for(state)
 
-    reasons = {p["name"]: p["excluded_because"] for p in payload["players"]}
+    assert reasons["Везде"] == "a group, not a speaker"
+    assert reasons["Без настройки"] == "no delay setting"
+    assert reasons["Выключена"] == "unavailable"
+    assert reasons["Кухня (ESP32)"] is None
+
+
+async def test_reasons_follow_the_browser_language(state):
+    reasons = await reasons_for(state, **{"Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"})
+
     assert reasons["Везде"] == "группа, а не колонка"
     assert reasons["Без настройки"] == "нет настройки задержки"
     assert reasons["Выключена"] == "недоступна"
-    assert reasons["Кухня (ESP32)"] is None
+
+
+async def test_a_fixed_language_overrides_the_browser():
+    reasons = await reasons_for(make_state(language="en"), **{"Accept-Language": "ru"})
+    assert reasons["Везде"] == "a group, not a speaker"
+
+
+async def test_the_page_tells_the_client_its_language():
+    client = await client_for(create_app(make_state(language="ru")))
+    try:
+        page = await (await client.get("/")).text()
+    finally:
+        await client.close()
+    assert '<html lang="ru">' in page
 
 
 async def test_ui_and_health_are_served(state):
@@ -173,7 +202,7 @@ async def test_ui_and_health_are_served(state):
     finally:
         await client.close()
 
-    assert "SpinAlign" in page
+    assert "Speaker Sync Calibrator" in page
     assert health == {"status": "ok"}
     # The recorder must not fall back to MediaRecorder, whose encoder delay
     # would corrupt the very thing being measured.
@@ -192,6 +221,21 @@ async def test_microphone_processing_is_disabled_in_the_client(state):
     assert "echoCancellation: false" in app_js
     assert "noiseSuppression: false" in app_js
     assert "autoGainControl: false" in app_js
+
+
+async def test_the_client_only_uses_page_relative_urls(state):
+    """Behind ingress the app lives under a path prefix, so anything addressed
+    from the host root would reach Home Assistant instead of the app."""
+    client = await client_for(create_app(state))
+    try:
+        page = await (await client.get("/")).text()
+        app_js = await (await client.get("/static/app.js")).text()
+    finally:
+        await client.close()
+
+    assert 'src="/' not in page
+    for absolute in ("fetch('/", "fetch(`/", "addModule('/", "location.host"):
+        assert absolute not in app_js
 
 
 # ---------------------------------------------------------- the round length
@@ -264,7 +308,7 @@ async def test_switching_a_speaker_off_takes_it_out_of_the_session(state):
     by_id = {p["player_id"]: p for p in payload["players"]}
     assert by_id["avr"]["enabled"] is False
     assert by_id["avr"]["calibratable"] is False
-    assert by_id["avr"]["excluded_because"] == "выключена вручную"
+    assert by_id["avr"]["excluded_because"] == "switched off here"
     # Nothing else moves.
     assert by_id["esp32"]["calibratable"] is True
 
@@ -375,6 +419,26 @@ async def test_protected_routes_refuse_an_anonymous_caller(guarded):
         assert (await client.get("/", allow_redirects=False)).status == 401
         assert (await client.get("/api/players")).status == 401
         assert (await client.get("/static/app.js")).status == 401
+    finally:
+        await client.close()
+
+
+async def test_the_trusted_proxy_needs_no_token():
+    """Home Assistant's ingress has already checked the user's own login."""
+    # The test client connects from loopback, so that stands in for the proxy.
+    client = await client_for(create_app(make_state(access_token=TOKEN, trusted_proxy="127.0.0.1")))
+    try:
+        assert (await client.get("/api/players")).status == 200
+    finally:
+        await client.close()
+
+
+async def test_any_other_address_still_needs_the_token():
+    client = await client_for(
+        create_app(make_state(access_token=TOKEN, trusted_proxy="172.30.32.2"))
+    )
+    try:
+        assert (await client.get("/api/players")).status == 401
     finally:
         await client.close()
 

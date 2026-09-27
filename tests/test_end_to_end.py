@@ -13,10 +13,10 @@ import pytest
 
 from sim.fake_ma import FakeMusicAssistant, SimulatedRecorder, VirtualClock, mixed_speakers
 from sim.virtual_room import RoomConfig, VirtualSpeaker
-from spinalign.calibration.profiles import Profile, apply_profile
-from spinalign.calibration.session import SessionConfig, calibrate, measure_once
-from spinalign.calibration.validate import determine_sign
-from spinalign.ma.backend import PlayerInfo, SelectedSpeakers
+from speaker_sync.calibration.profiles import Profile, apply_profile
+from speaker_sync.calibration.session import SessionConfig, calibrate, measure_once
+from speaker_sync.calibration.validate import determine_sign
+from speaker_sync.ma.backend import PlayerInfo, SelectedSpeakers
 
 
 def make_server(speakers=None, **room_kwargs):
@@ -124,7 +124,7 @@ async def test_a_backwards_correction_is_undone_rather_than_reported():
 
     assert report.improved
     assert report.sign == -1
-    assert any("торопит" in problem for problem in report.problems)
+    assert any("advances a speaker" in problem for problem in report.problems)
 
 
 async def test_silent_speaker_does_not_poison_the_others():
@@ -274,7 +274,7 @@ async def test_an_inverted_server_is_recognised_and_corrected_within_the_run():
     assert report.sign == -1
     assert report.spread_after_ms is not None
     assert report.spread_after_ms < 2.0
-    assert any("торопит" in problem for problem in report.problems)
+    assert any("advances a speaker" in problem for problem in report.problems)
 
 
 async def test_a_normal_server_is_left_alone_and_still_reports_its_convention():
@@ -305,7 +305,7 @@ async def test_a_measurement_where_one_speaker_was_audible_throughout_is_called_
 
     report = await calibrate(server, recorder, sleep=clock.sleep)
 
-    assert any("круги никого не выделили" in problem for problem in report.problems)
+    assert any("singled no one out" in problem for problem in report.problems)
 
 
 async def test_speakers_held_together_by_their_delays_are_not_called_out():
@@ -327,7 +327,7 @@ async def test_a_speaker_that_ignores_mute_is_named():
     server, recorder, clock = make_server(snr_db=30.0)
     server.ignores_mute = {"esp32"}
 
-    with pytest.raises(RuntimeError, match="не отреагировали"):
+    with pytest.raises(RuntimeError, match="did not respond to the mute"):
         await calibrate(server, recorder, sleep=clock.sleep)
 
 
@@ -354,7 +354,7 @@ async def test_a_speaker_that_never_joins_the_group_is_named():
 
     message = str(caught.value)
     assert "Спальня (Bluetooth)" in message
-    assert "не встали в одну группу" in message
+    assert "did not join a group" in message
 
 
 async def test_a_provider_that_reports_no_group_state_is_not_second_guessed():

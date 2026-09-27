@@ -1,0 +1,5 @@
+# Lets this repository be added to Home Assistant as an add-on repository:
+# Settings → Add-ons → Add-on Store → ⋮ → Repositories.
+name: Speaker Sync Calibrator
+url: https://github.com/vshivtsev-dev/speaker-sync-calibrator
+maintainer: vshivtsev-dev

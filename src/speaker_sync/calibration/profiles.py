@@ -29,14 +29,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from spinalign.calibration.session import CalibrationReport
-from spinalign.calibration.solver import CalibrationSolution, PlayerMeasurement, solve
-from spinalign.ma.backend import SpeakerBackend
+from speaker_sync.calibration.session import CalibrationReport
+from speaker_sync.calibration.solver import CalibrationSolution, PlayerMeasurement, solve
+from speaker_sync.i18n import say
+from speaker_sync.ma.backend import SpeakerBackend
 
 STATE_FILE = "state.json"
 STATE_VERSION = 1
 
-logger = logging.getLogger("spinalign.profiles")
+logger = logging.getLogger("speaker_sync.profiles")
 
 
 @dataclass(frozen=True)
@@ -142,11 +143,19 @@ class ApplyOutcome:
         notes = []
         if self.missing:
             notes.append(
-                "not on this system any more, so they were skipped: " + ", ".join(self.missing)
+                say(
+                    en="not on this system any more, so they were skipped: ",
+                    ru="этих колонок больше нет, они пропущены: ",
+                )
+                + ", ".join(self.missing)
             )
         if self.unknown:
             notes.append(
-                "not in this profile, so they are left unaligned: " + ", ".join(self.unknown)
+                say(
+                    en="not in this position, so they are left unaligned: ",
+                    ru="этих колонок нет в позиции, они не выровнены: ",
+                )
+                + ", ".join(self.unknown)
             )
         return tuple(notes)
 
@@ -300,7 +309,12 @@ async def apply_profile(backend: SpeakerBackend, profile: Profile) -> ApplyOutco
     it work out which players genuinely need writing.
     """
     if not profile.speakers:
-        raise ValueError(f"profile {profile.name!r} has no speakers in it")
+        raise ValueError(
+            say(
+                en=f"position {profile.name!r} has no speakers in it",
+                ru=f"в позиции {profile.name!r} нет ни одной колонки",
+            )
+        )
 
     present = {p.player_id: p for p in await backend.list_players() if p.is_calibratable}
     stored = {speaker.player_id: speaker for speaker in profile.speakers}
@@ -321,7 +335,10 @@ async def apply_profile(backend: SpeakerBackend, profile: Profile) -> ApplyOutco
     ]
     if not measurements:
         raise ValueError(
-            f"none of the speakers in profile {profile.name!r} are available right now"
+            say(
+                en=f"none of the speakers in position {profile.name!r} are available right now",
+                ru=f"ни одна колонка из позиции {profile.name!r} сейчас недоступна",
+            )
         )
 
     solution = solve(measurements, sign=profile.sign)

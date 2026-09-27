@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from spinalign.calibration.solver import (
+from speaker_sync.calibration.solver import (
     SYNC_ADJUST_LIMIT_MS,
     PlayerMeasurement,
     solve,

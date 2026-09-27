@@ -28,9 +28,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from spinalign.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
+from speaker_sync.i18n import say
+from speaker_sync.ma.backend import SYNC_ADJUST_KEY, PlayerInfo
 
-logger = logging.getLogger("spinalign.ma")
+logger = logging.getLogger("speaker_sync.ma")
 
 DEFAULT_CONNECT_TIMEOUT = 30.0
 
@@ -101,7 +102,7 @@ class ConfigEntryView:
 
 
 class MusicAssistantBackend:
-    """Implements :class:`spinalign.ma.backend.SpeakerBackend` over the real API.
+    """Implements :class:`speaker_sync.ma.backend.SpeakerBackend` over the real API.
 
     ``music-assistant-client`` is an optional dependency — the DSP core, the
     solver and the whole simulated test suite never touch it — so it is
@@ -135,7 +136,7 @@ class MusicAssistantBackend:
         except ImportError as error:  # pragma: no cover - depends on install extras
             raise RuntimeError(
                 "music-assistant-client is not installed. "
-                'Install the optional extra with: pip install "spinalign[ma]"'
+                'Install the optional extra with: pip install "speaker-sync[ma]"'
             ) from error
 
         client = MusicAssistantClient(server_url, aiohttp_session=session, token=token)
@@ -311,14 +312,20 @@ def unreachable_track_message(url: str, error: Exception) -> str:
     other way round — so a failure here says nothing about the URL the browser
     uses, which is the address people naturally reach for.
     """
-    return (
-        f"Music Assistant не смог загрузить тестовый трек по адресу {url} — "
-        "значит, он не достучался до SpinAlign. Это адрес из переменной "
-        "SPINALIGN_AUDIO_BASE_URL, по которому Music Assistant обращается к нам, "
+    return say(
+        en=f"Music Assistant could not load the test track from {url} — "
+        "so it did not reach Speaker Sync Calibrator. That address comes from "
+        "SPEAKER_SYNC_AUDIO_BASE_URL: it is how Music Assistant reaches us, and it is "
+        "not the address you open the UI on. A Docker service name only works when "
+        "Music Assistant is on the same network; otherwise use the host's LAN address "
+        f"and an open port. Music Assistant said: {error}",
+        ru=f"Music Assistant не смог загрузить тестовый трек по адресу {url} — "
+        "значит, он не достучался до Speaker Sync Calibrator. Это адрес из переменной "
+        "SPEAKER_SYNC_AUDIO_BASE_URL, по которому Music Assistant обращается к нам, "
         "и он не совпадает с адресом, по которому вы открываете интерфейс. "
         "Имя docker-сервиса годится, только если Music Assistant стоит в той же "
         "сети; иначе нужен LAN-адрес хоста и открытый порт. "
-        f"Ответ Music Assistant: {error}"
+        f"Ответ Music Assistant: {error}",
     )
 
 
@@ -332,7 +339,7 @@ def find_delay_entry(entries):
     integer spanning a few hundred milliseconds either way, and says "sync" or
     "delay" somewhere.
 
-    Picking wrong is survivable. :mod:`spinalign.calibration.validate` probes
+    Picking wrong is survivable. :mod:`speaker_sync.calibration.validate` probes
     the setting with a known offset and reports "asked for +100 ms, nothing
     moved" — so a bad guess shows up as an inconclusive result rather than a
     quietly ruined calibration.

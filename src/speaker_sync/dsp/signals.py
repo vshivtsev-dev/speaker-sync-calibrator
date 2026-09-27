@@ -78,7 +78,7 @@ class TestSignal:
 
     ``period_samples`` and ``chirp_starts`` are in the *track's* sample rate.
     A recording made at a different rate is handled by regenerating the
-    reference chirp at the recording's rate — see :mod:`spinalign.dsp.detect`.
+    reference chirp at the recording's rate — see :mod:`speaker_sync.dsp.detect`.
     """
 
     samples: np.ndarray
