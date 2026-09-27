@@ -282,7 +282,7 @@ the probed sign, and without it both are gone on every restart.
 
 This repository is also a Home Assistant add-on repository. In Home Assistant:
 **Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add
-`https://github.com/vshivtsev-dev/audio-sync`, and install **Speaker Sync Calibrator**.
+`https://github.com/vshivtsev-dev/speaker-sync-calibrator`, and install **Speaker Sync Calibrator**.
 
 Next to the Music Assistant add-on it needs no configuration beyond, at most,
 a Music Assistant token:

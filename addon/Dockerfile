@@ -5,7 +5,7 @@ FROM ${BUILD_FROM}
 # not next to the Dockerfile the way it is for the standalone image. It is
 # installed from the repository's own archive instead — no git needed, and
 # numpy and scipy come as wheels, so no compiler either.
-ARG SPEAKER_SYNC_REPO=https://github.com/vshivtsev-dev/audio-sync
+ARG SPEAKER_SYNC_REPO=https://github.com/vshivtsev-dev/speaker-sync-calibrator
 ARG SPEAKER_SYNC_REF=main
 
 ENV PYTHONUNBUFFERED=1 \

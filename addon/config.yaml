@@ -2,7 +2,7 @@ name: Speaker Sync Calibrator
 version: "0.1.0"
 slug: speaker_sync_calibrator
 description: Acoustic latency calibration for Music Assistant multi-room speakers
-url: https://github.com/vshivtsev-dev/audio-sync
+url: https://github.com/vshivtsev-dev/speaker-sync-calibrator
 # numpy and scipy publish wheels for these two only; anything else would have
 # to compile them on the device.
 arch:
