@@ -5,10 +5,15 @@
 
 const el = (id) => document.getElementById(id);
 
+// Every URL is relative to the page, never to the host root: behind Home
+// Assistant's ingress the app lives under /api/hassio_ingress/<token>/, and an
+// absolute '/api/…' would land on Home Assistant's own API instead.
+const here = (path) => new URL(path, location.href).href;
+
 // Match the page's own scheme: wss behind the TLS-terminating proxy, ws when
 // developing against http://localhost (which browsers count as a secure
 // context, so the microphone still works there).
-const socketUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+const socketUrl = here('ws').replace(/^http/, 'ws');
 
 let socket = null;
 let audio = null;      // AudioContext
@@ -61,7 +66,7 @@ async function openMicrophone() {
   });
 
   audio = new AudioContext();
-  await audio.audioWorklet.addModule('/static/recorder-worklet.js');
+  await audio.audioWorklet.addModule('static/recorder-worklet.js');
 
   node = new AudioWorkletNode(audio, 'spinalign-recorder');
   node.port.onmessage = (event) => {
@@ -212,7 +217,7 @@ function nameOf(playerId) {
 }
 
 async function refreshPlayers() {
-  const response = await fetch('/api/players');
+  const response = await fetch('api/players');
   const data = await response.json();
   players = data.players;
   session = data;
@@ -282,7 +287,7 @@ async function refreshPlayers() {
 
 async function setPlayerEnabled(playerId, enabled) {
   try {
-    const response = await fetch(`/api/players/${encodeURIComponent(playerId)}/enabled`, {
+    const response = await fetch(`api/players/${encodeURIComponent(playerId)}/enabled`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
@@ -349,7 +354,7 @@ function showReport(report) {
 // ----------------------------------------------------------------- profiles
 
 async function refreshProfiles() {
-  const response = await fetch('/api/profiles');
+  const response = await fetch('api/profiles');
   if (!response.ok) {
     // No state directory configured: the feature is simply off.
     el('profiles-card').classList.add('hidden');
@@ -380,7 +385,7 @@ async function applyProfile(name) {
   setBusy(true);
   setStatus(`Применяю «${name}»…`, 'live');
   try {
-    const response = await fetch(`/api/profiles/${encodeURIComponent(name)}/apply`, {
+    const response = await fetch(`api/profiles/${encodeURIComponent(name)}/apply`, {
       method: 'POST',
     });
     if (!response.ok) throw new Error(await response.text());
@@ -405,7 +410,7 @@ async function saveProfile() {
   const name = el('save-name').value.trim();
   if (!name) return;
 
-  const response = await fetch('/api/profiles', {
+  const response = await fetch('api/profiles', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -420,7 +425,7 @@ async function saveProfile() {
 }
 
 async function deleteProfile(name) {
-  await fetch(`/api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  await fetch(`api/profiles/${encodeURIComponent(name)}`, { method: 'DELETE' });
   refreshProfiles();
 }
 
@@ -445,6 +450,10 @@ async function start(kind) {
     socket.send(JSON.stringify({ type: kind, chirps_per_round: chosenChirps() }));
   } catch (error) {
     setStatus('Нет доступа к микрофону: ' + error.message, 'err');
+    // Inside Home Assistant's panel the page is an iframe, and whether it may
+    // ask for the microphone is the embedding page's call, not ours. The same
+    // ingress address works as a top-level tab, where the browser asks directly.
+    if (window.top !== window.self) el('popout').hidden = false;
     setBusy(false);
   }
 }

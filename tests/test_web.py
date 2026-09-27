@@ -194,6 +194,21 @@ async def test_microphone_processing_is_disabled_in_the_client(state):
     assert "autoGainControl: false" in app_js
 
 
+async def test_the_client_only_uses_page_relative_urls(state):
+    """Behind ingress the app lives under a path prefix, so anything addressed
+    from the host root would reach Home Assistant instead of the app."""
+    client = await client_for(create_app(state))
+    try:
+        page = await (await client.get("/")).text()
+        app_js = await (await client.get("/static/app.js")).text()
+    finally:
+        await client.close()
+
+    assert 'src="/' not in page
+    for absolute in ("fetch('/", "fetch(`/", "addModule('/", "location.host"):
+        assert absolute not in app_js
+
+
 # ---------------------------------------------------------- the round length
 
 
@@ -375,6 +390,26 @@ async def test_protected_routes_refuse_an_anonymous_caller(guarded):
         assert (await client.get("/", allow_redirects=False)).status == 401
         assert (await client.get("/api/players")).status == 401
         assert (await client.get("/static/app.js")).status == 401
+    finally:
+        await client.close()
+
+
+async def test_the_trusted_proxy_needs_no_token():
+    """Home Assistant's ingress has already checked the user's own login."""
+    # The test client connects from loopback, so that stands in for the proxy.
+    client = await client_for(create_app(make_state(access_token=TOKEN, trusted_proxy="127.0.0.1")))
+    try:
+        assert (await client.get("/api/players")).status == 200
+    finally:
+        await client.close()
+
+
+async def test_any_other_address_still_needs_the_token():
+    client = await client_for(
+        create_app(make_state(access_token=TOKEN, trusted_proxy="172.30.32.2"))
+    )
+    try:
+        assert (await client.get("/api/players")).status == 401
     finally:
         await client.close()
 

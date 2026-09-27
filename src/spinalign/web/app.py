@@ -82,6 +82,15 @@ class AppState:
     """Shared secret for the UI, API and WebSocket. ``None`` disables the
     check, which is what local development and the simulator run with."""
 
+    trusted_proxy: str | None = None
+    """Address whose requests were already authenticated upstream.
+
+    Home Assistant's ingress is the case this exists for: the Supervisor
+    proxies to the add-on from ``172.30.32.2`` only after Home Assistant has
+    checked the user's own login, so asking that user for a second secret adds
+    nothing. Anything arriving by any other route still needs the token.
+    """
+
     store: ProfileStore | None = None
     """Saved listening positions, and the remembered sign convention.
 
@@ -248,6 +257,8 @@ async def auth_middleware(request: web.Request, handler):
     expected = state.access_token
 
     if not expected or request.path in OPEN_PATHS:
+        return await handler(request)
+    if state.trusted_proxy and request.remote == state.trusted_proxy:
         return await handler(request)
 
     supplied = _supplied_token(request)

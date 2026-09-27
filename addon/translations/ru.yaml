@@ -1,0 +1,23 @@
+configuration:
+  ma_url:
+    name: Адрес Music Assistant
+    description: >-
+      Оставьте пустым, чтобы использовать аддон Music Assistant. Заполните,
+      если Music Assistant запущен отдельно, например http://192.168.1.10:8095.
+  ma_token:
+    name: Токен Music Assistant
+    description: >-
+      Долгоживущий токен из настроек Music Assistant — нужен, если сервер
+      требует авторизацию.
+  audio_base_url:
+    name: Адрес SpinAlign для Music Assistant
+    description: >-
+      Оставьте пустым, если Music Assistant — аддон. Если он запущен отдельно,
+      откройте порт 8080 и укажите http://<LAN-адрес Home Assistant>:<порт>.
+  access_token:
+    name: Токен для прямого доступа
+    description: >-
+      Защищает только открытый порт; через панель Home Assistant вход по
+      учётной записи HA. Если пусто — сгенерируется и будет выведен в лог.
+network:
+  8080/tcp: Прямой доступ по токену (для панели HA не нужен)

@@ -1,0 +1,75 @@
+"""The add-on launcher: what it discovers, and what the options override."""
+
+from __future__ import annotations
+
+import pytest
+
+from spinalign.addon import INGRESS_PROXY, load_access_token, resolve
+
+MA_ON_HOST_NETWORK = {"ip_address": "172.30.32.1", "state": "started"}
+SELF = {"ip_address": "172.30.33.7"}
+
+
+def supervisor(**addons):
+    return lambda slug: addons.get(slug)
+
+
+def test_music_assistant_and_own_address_are_discovered(tmp_path):
+    env = resolve(
+        {},
+        supervisor(d5369777_music_assistant=MA_ON_HOST_NETWORK, self=SELF),
+        tmp_path / "access_token",
+    )
+
+    assert env["SPINALIGN_MA_URL"] == "http://172.30.32.1:8095"
+    assert env["SPINALIGN_AUDIO_BASE_URL"] == "http://172.30.33.7:8080"
+    assert env["SPINALIGN_TRUSTED_PROXY"] == INGRESS_PROXY
+    assert env["SPINALIGN_STATE_DIR"] == str(tmp_path)
+
+
+def test_the_beta_add_on_is_found_too(tmp_path):
+    env = resolve(
+        {},
+        supervisor(d5369777_music_assistant_beta=MA_ON_HOST_NETWORK, self=SELF),
+        tmp_path / "access_token",
+    )
+    assert env["SPINALIGN_MA_URL"] == "http://172.30.32.1:8095"
+
+
+def test_options_win_over_discovery(tmp_path):
+    env = resolve(
+        {
+            "ma_url": "http://192.168.1.10:8095/",
+            "ma_token": " abc ",
+            "audio_base_url": "http://192.168.1.20:8080/",
+            "access_token": "chosen",
+        },
+        supervisor(d5369777_music_assistant=MA_ON_HOST_NETWORK, self=SELF),
+        tmp_path / "access_token",
+    )
+
+    assert env["SPINALIGN_MA_URL"] == "http://192.168.1.10:8095"
+    assert env["SPINALIGN_MA_TOKEN"] == "abc"
+    assert env["SPINALIGN_AUDIO_BASE_URL"] == "http://192.168.1.20:8080"
+    assert env["SPINALIGN_ACCESS_TOKEN"] == "chosen"
+    assert not (tmp_path / "access_token").exists()
+
+
+def test_without_music_assistant_the_option_to_set_is_named(tmp_path):
+    with pytest.raises(ValueError, match="ma_url"):
+        resolve({}, supervisor(self=SELF), tmp_path / "access_token")
+
+
+def test_without_an_own_address_the_option_to_set_is_named(tmp_path):
+    with pytest.raises(ValueError, match="audio_base_url"):
+        resolve(
+            {}, supervisor(d5369777_music_assistant=MA_ON_HOST_NETWORK), tmp_path / "t"
+        )
+
+
+def test_the_generated_token_survives_a_restart(tmp_path):
+    path = tmp_path / "access_token"
+    first = load_access_token(path)
+
+    assert len(first) >= 32
+    assert load_access_token(path) == first

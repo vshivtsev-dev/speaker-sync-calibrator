@@ -1,0 +1,5 @@
+# Lets this repository be added to Home Assistant as an add-on repository:
+# Settings → Add-ons → Add-on Store → ⋮ → Repositories.
+name: SpinAlign
+url: https://github.com/vshivtsev-dev/audio-sync
+maintainer: vshivtsev-dev

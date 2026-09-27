@@ -119,6 +119,7 @@ spinalign serve
 | `SPINALIGN_ACCESS_TOKEN` | shared secret for the UI, API and socket |
 | `SPINALIGN_STATE_DIR` | saved positions and the probed sign; `/data` in the image |
 | `SPINALIGN_HOST` / `SPINALIGN_PORT` | bind address, default `0.0.0.0:8080` |
+| `SPINALIGN_TRUSTED_PROXY` | a proxy that authenticates users itself (HA ingress); its requests skip the token |
 
 `SPINALIGN_AUDIO_BASE_URL` is the one that catches people out, and it is
 required rather than guessed. It is *not* the address the browser uses — it is
@@ -273,6 +274,27 @@ cookie `Secure`, so a proxy terminating TLS needs to pass that header.
 The `/data` volume is the part not to skip: it holds the saved positions and
 the probed sign, and without it both are gone on every restart.
 
+### Home Assistant add-on
+
+This repository is also a Home Assistant add-on repository. In Home Assistant:
+**Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add
+`https://github.com/vshivtsev-dev/audio-sync`, and install **SpinAlign**.
+
+Next to the Music Assistant add-on it needs no configuration beyond, at most,
+a Music Assistant token:
+
+- Music Assistant's address is looked up through the Supervisor.
+- `SPINALIGN_AUDIO_BASE_URL` becomes the add-on's own address on the internal
+  network, which the Music Assistant add-on can reach.
+- The UI is served through ingress, so it opens from the sidebar behind the
+  Home Assistant login and its HTTPS — the secure context the microphone
+  needs. Requests from the ingress proxy skip the access token
+  (`SPINALIGN_TRUSTED_PROXY`); the optional direct port still requires it.
+
+The add-on lives in `addon/` and installs the package from this
+repository's archive at the ref named in `addon/build.yaml`. Its own
+documentation is `addon/DOCS.md`.
+
 ## Status
 
 Complete and covered by 121 tests that need no hardware: Music Assistant sits
@@ -299,5 +321,7 @@ src/spinalign/
   calibration/  round planning, analysis, solver, sign probe, saved positions
   ma/           the port, and the Music Assistant adapter behind it
   web/          UI, microphone capture, track endpoint, access token
+  addon.py      Home Assistant add-on launcher: options and Supervisor discovery
+addon/          the Home Assistant add-on (config, Dockerfile, docs)
 sim/            fake Music Assistant and a virtual room, for tests
 ```

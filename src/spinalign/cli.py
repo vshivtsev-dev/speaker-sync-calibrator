@@ -47,6 +47,15 @@ def main(argv: list[str] | None = None) -> int:
         help="shared secret protecting the UI, API and socket  [SPINALIGN_ACCESS_TOKEN]",
     )
     serve.add_argument(
+        "--trusted-proxy",
+        default=os.environ.get("SPINALIGN_TRUSTED_PROXY"),
+        help=(
+            "address of a proxy that has already authenticated its users, such "
+            "as Home Assistant's ingress; its requests skip the access token  "
+            "[SPINALIGN_TRUSTED_PROXY]"
+        ),
+    )
+    serve.add_argument(
         "--state-dir",
         type=Path,
         default=Path(os.environ.get("SPINALIGN_STATE_DIR", Path.home() / ".spinalign")),
@@ -135,6 +144,7 @@ async def _serve(args) -> int:
         session_config=SessionConfig(),
         audio_base_url=args.audio_base_url.rstrip("/"),
         access_token=args.access_token or None,
+        trusted_proxy=args.trusted_proxy or None,
     )
 
     from spinalign.calibration.profiles import ProfileStore

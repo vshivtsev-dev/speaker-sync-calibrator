@@ -1,0 +1,40 @@
+name: SpinAlign
+version: "0.1.0"
+slug: spinalign
+description: Acoustic latency calibration for Music Assistant multi-room speakers
+url: https://github.com/vshivtsev-dev/audio-sync
+# numpy and scipy publish wheels for these two only; anything else would have
+# to compile them on the device.
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+
+# The UI opens inside Home Assistant, behind Home Assistant's own login and
+# its HTTPS — which is also what gets the phone's browser to offer the
+# microphone at all.
+ingress: true
+ingress_port: 8080
+panel_icon: mdi:speaker-multiple
+panel_title: SpinAlign
+
+# Read-only lookups of the Music Assistant add-on and of this one, to find
+# both addresses without asking.
+hassio_api: true
+
+# Off by default: ingress covers the usual case. Map it to reach the app
+# directly, e.g. behind a reverse proxy of your own.
+ports:
+  8080/tcp: null
+ports_description:
+  8080/tcp: Direct access, needs the access token (not needed with ingress)
+
+watchdog: http://[HOST]:[PORT:8080]/healthz
+
+options: {}
+schema:
+  ma_url: url?
+  ma_token: password?
+  audio_base_url: url?
+  access_token: password?
