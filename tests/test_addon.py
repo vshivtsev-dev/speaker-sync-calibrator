@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from speaker_sync.addon import INGRESS_PROXY, load_access_token, resolve
+from speaker_sync.addon import (
+    INGRESS_PROXY,
+    load_access_token,
+    music_assistant_connector,
+    resolve,
+)
 
 MA_ON_HOST_NETWORK = {"ip_address": "172.30.32.1", "state": "started"}
 SELF = {"ip_address": "172.30.33.7"}
@@ -58,9 +63,15 @@ def test_options_win_over_discovery(tmp_path):
     assert not (tmp_path / "access_token").exists()
 
 
-def test_without_music_assistant_the_option_to_set_is_named(tmp_path):
-    with pytest.raises(ValueError, match="ma_url"):
-        resolve({}, supervisor(self=SELF), tmp_path / "access_token")
+def test_without_music_assistant_the_add_on_still_starts(tmp_path):
+    env = resolve({}, supervisor(self=SELF), tmp_path / "access_token")
+    assert env["SPEAKER_SYNC_MA_URL"] == ""
+
+
+async def test_a_missing_music_assistant_names_the_option_to_set(tmp_path):
+    env = resolve({}, supervisor(self=SELF), tmp_path / "access_token")
+    with pytest.raises(RuntimeError, match="ma_url"):
+        await music_assistant_connector(env, supervisor(self=SELF))()
 
 
 def test_without_an_own_address_the_option_to_set_is_named(tmp_path):

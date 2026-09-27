@@ -22,6 +22,7 @@ import contextlib
 import json
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import urlencode
@@ -69,10 +70,25 @@ def _busy_message() -> str:
 
 STATE = web.AppKey("state", "AppState")
 
+RETRY_SECONDS = 15.0
+"""Pause between attempts to reach Music Assistant. At boot the add-ons
+start in no particular order, so a first refusal is expected, not fatal."""
+
+
+class NotConnected(RuntimeError):
+    """Music Assistant has not been reached (yet)."""
+
 
 @dataclass
 class AppState:
-    backend: SpeakerBackend
+    backend: SpeakerBackend | None = None
+    """``None`` until Music Assistant has been reached. The UI is served
+    regardless, so that a missing token or an unreachable server is explained
+    on the page rather than showing up as the proxy's bare 502."""
+
+    connection_problem: str | None = None
+    """Why the last attempt to reach Music Assistant failed."""
+
     session_config: SessionConfig = field(default_factory=SessionConfig)
     audio_base_url: str = ""
     """How **Music Assistant** reaches our track endpoint.
@@ -123,6 +139,24 @@ class AppState:
     """Kept so a position can be named and saved *after* its result is on
     screen, rather than having to be named before the run starts."""
 
+    def require_backend(self) -> SpeakerBackend:
+        if self.backend is None:
+            raise NotConnected(self.not_connected_message())
+        return self.backend
+
+    def not_connected_message(self) -> str:
+        if self.connection_problem:
+            return say(
+                en="Cannot reach Music Assistant yet: "
+                f"{self.connection_problem} Retrying every {RETRY_SECONDS:.0f} s.",
+                ru="Пока не удаётся подключиться к Music Assistant: "
+                f"{self.connection_problem} Повтор каждые {RETRY_SECONDS:.0f} с.",
+            )
+        return say(
+            en="Connecting to Music Assistant …",
+            ru="Подключение к Music Assistant …",
+        )
+
     def signal_url(self, signal: TestSignal) -> str:
         return f"{self.audio_base_url}/signal.wav?chirps={signal.chirp_count}"
 
@@ -134,7 +168,7 @@ class AppState:
         set of speakers for its whole run, so flipping a switch cannot change
         what is being measured half way through.
         """
-        return SelectedSpeakers(self.backend, frozenset(self.disabled_players))
+        return SelectedSpeakers(self.require_backend(), frozenset(self.disabled_players))
 
     def adopt_store(self, store: ProfileStore) -> None:
         """Attach a store and take what it remembers as the starting point."""
@@ -279,6 +313,15 @@ async def language_middleware(request: web.Request, handler):
 
 
 @web.middleware
+async def connection_middleware(request: web.Request, handler):
+    """Answer 503 with the reason while Music Assistant is out of reach."""
+    try:
+        return await handler(request)
+    except NotConnected as error:
+        raise web.HTTPServiceUnavailable(text=str(error), content_type="text/plain") from None
+
+
+@web.middleware
 async def auth_middleware(request: web.Request, handler):
     state: AppState = request.app[STATE]
     expected = state.access_token
@@ -307,7 +350,9 @@ async def auth_middleware(request: web.Request, handler):
 
 def create_app(state: AppState) -> web.Application:
     """The whole surface on one port: UI, API, socket, track, health."""
-    app = web.Application(middlewares=[language_middleware, auth_middleware])
+    app = web.Application(
+        middlewares=[language_middleware, auth_middleware, connection_middleware]
+    )
     app[STATE] = state
 
     page = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
@@ -322,7 +367,11 @@ def create_app(state: AppState) -> web.Application:
         )
 
     async def healthz(_: web.Request) -> web.Response:
-        return web.json_response({"status": "ok"})
+        # "ok" even while Music Assistant is unreachable: restarting this
+        # process would not bring it any closer, and the page explains why.
+        return web.json_response(
+            {"status": "ok", "music_assistant": state.backend is not None}
+        )
 
     async def players(_: web.Request) -> web.Response:
         found = await state.speakers.list_players()
@@ -386,7 +435,7 @@ def create_app(state: AppState) -> web.Application:
         player_id = request.match_info["player_id"]
         # Checked against the server's own list, so a stale page cannot leave a
         # switch set for a player that no longer exists.
-        known = {p.player_id for p in await state.backend.list_players()}
+        known = {p.player_id for p in await state.require_backend().list_players()}
         if player_id not in known:
             raise web.HTTPNotFound(text="No such player.", content_type="text/plain")
 
@@ -576,9 +625,9 @@ async def _run_job(
 
     state.busy = True
     progress = outbox.put_nowait
-    # One view of the speakers for the whole job, switches already applied.
-    speakers = state.speakers
     try:
+        # One view of the speakers for the whole job, switches already applied.
+        speakers = state.speakers
         if kind == "probe_sign":
             check = await determine_sign(
                 speakers,
@@ -647,13 +696,45 @@ def describe(report: CalibrationReport) -> dict:
     }
 
 
+Connect = Callable[[], Awaitable[SpeakerBackend]]
+
+
+async def keep_trying(
+    state: AppState,
+    connect: Connect,
+    *,
+    retry_seconds: float = RETRY_SECONDS,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Call ``connect`` until it succeeds, keeping the reason it last failed."""
+    while state.backend is None:
+        try:
+            state.backend = await connect()
+        except Exception as error:
+            state.connection_problem = str(error) or type(error).__name__
+            logger.warning(
+                "Music Assistant not reachable: %s — retrying in %.0fs",
+                state.connection_problem,
+                retry_seconds,
+            )
+            await sleep(retry_seconds)
+        else:
+            state.connection_problem = None
+
+
 async def serve(
     state: AppState,
     *,
     host: str = "0.0.0.0",
     port: int = 8080,
+    connect: Connect | None = None,
 ) -> None:
-    """Run the app until cancelled. TLS belongs to the reverse proxy."""
+    """Run the app until cancelled. TLS belongs to the reverse proxy.
+
+    The port opens straight away. ``connect``, when given, is then retried in
+    the background until Music Assistant answers, and until it does the UI
+    says what is wrong instead of the page not loading at all.
+    """
     if not state.audio_base_url:
         raise ValueError(
             "audio_base_url is not set. It must be the address Music Assistant "
@@ -681,6 +762,8 @@ async def serve(
         print("           calibration. Set SPEAKER_SYNC_ACCESS_TOKEN when exposing it.")
 
     try:
+        if connect is not None:
+            await keep_trying(state, connect)
         await asyncio.Event().wait()
     finally:
         await runner.cleanup()
