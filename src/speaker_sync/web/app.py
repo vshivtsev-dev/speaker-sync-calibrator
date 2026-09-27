@@ -439,6 +439,9 @@ def create_app(state: AppState) -> web.Application:
                 ],
                 "sign": state.sign,
                 "sign_checked": state.sign_checked,
+                # The probe only means something for a delay setting whose
+                # direction is not specified; Sendspin's is.
+                "sign_needed": any(p.is_calibratable and p.delay_sign is None for p in found),
                 "chirps_per_round": state.session_config.chirps_per_round,
                 "chirps_range": [MIN_CHIRPS_PER_ROUND, MAX_CHIRPS_PER_ROUND],
                 # So the UI can quote a duration without duplicating the

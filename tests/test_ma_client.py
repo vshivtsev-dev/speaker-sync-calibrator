@@ -89,6 +89,9 @@ class FakePlayers:
     players: list[FakePlayer]
     calls: list[tuple] = field(default_factory=list)
 
+    def __getitem__(self, player_id):
+        return next(p for p in self.players if p.player_id == player_id)
+
     async def volume_mute(self, player_id, muted):
         self.calls.append(("volume_mute", player_id, muted))
 
@@ -336,6 +339,46 @@ async def test_a_renamed_setting_is_also_written_under_its_real_name():
     await adapter.set_sync_adjust("odd", -75)
 
     assert client.config.saved == [("odd", {"output_delay_correction": -75})]
+
+
+SPLIT = "||protocol||"
+
+
+async def test_the_sendspin_delay_is_found_by_name_and_advances():
+    """Music Assistant's key for Sendspin's output_delay_ms, whose direction
+    the protocol specifies: a larger value plays earlier."""
+    client = FakeClient(
+        [FakePlayer("bt", "JBL", provider="sendspin")],
+        entries={"bt": [FakeEntry("sendspin_static_delay", range=(0, 5000))]},
+    )
+
+    (player,) = await MusicAssistantBackend(client).list_players()
+
+    assert player.sync_adjust_key == "sendspin_static_delay"
+    assert player.delay_range_ms == (0, 5000)
+    assert player.delay_sign == -1
+
+
+async def test_the_active_protocols_delay_is_the_one_written():
+    """A player with two linked protocols has a delay for each; only the one
+    carrying the audio changes what is heard."""
+    client = FakeClient(
+        [FakePlayer("jack", "opi5p jack", active_output_protocol="jack-sendspin")],
+        entries={
+            "jack": [
+                FakeEntry(f"jack-airplay{SPLIT}sync_adjust", range=(-500, 500)),
+                FakeEntry(f"jack-sendspin{SPLIT}sendspin_static_delay", range=(0, 5000)),
+            ]
+        },
+    )
+    adapter = MusicAssistantBackend(client)
+
+    (player,) = await adapter.list_players()
+    await adapter.set_sync_adjust("jack", 120)
+
+    assert player.sync_adjust_key == f"jack-sendspin{SPLIT}sendspin_static_delay"
+    assert player.delay_sign == -1
+    assert client.config.saved == [("jack", {f"jack-sendspin{SPLIT}sendspin_static_delay": 120})]
 
 
 async def test_unrelated_integer_settings_are_not_mistaken_for_the_delay():

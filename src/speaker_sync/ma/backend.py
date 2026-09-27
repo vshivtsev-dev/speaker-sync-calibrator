@@ -19,6 +19,35 @@ SENDSPIN_PROVIDER = "sendspin"
 # Music Assistant's per-player sync correction, in milliseconds.
 SYNC_ADJUST_KEY = "sync_adjust"
 
+# A Sendspin player's delay: Music Assistant's name for the protocol's
+# ``output_delay_ms`` (``static_delay_ms`` before the spec renamed it).
+SENDSPIN_DELAY_KEY = "sendspin_static_delay"
+
+# A player whose audio goes out over a linked protocol carries that protocol's
+# settings under ``<protocol player id>||protocol||<key>``; saving the prefixed
+# key on the player writes it through to the protocol player.
+PROTOCOL_KEY_SPLITTER = "||protocol||"
+
+KNOWN_DELAY_SIGNS = {SENDSPIN_DELAY_KEY: -1}
+"""Delay settings whose direction is fixed by specification, not by probing.
+
+Sendspin clients subtract ``output_delay_ms`` from every timestamp before
+scheduling playback, so a larger value plays *earlier*, and the range is
+0–5000 with negatives forbidden. ``sync_adjust`` is left to the probe: its
+direction is not specified, and Music Assistant's providers handle it each
+their own way.
+"""
+
+
+def base_key(key: str) -> str:
+    """A config key without the protocol player's prefix."""
+    return key.split(PROTOCOL_KEY_SPLITTER, 1)[-1]
+
+
+def known_delay_sign(key: str | None) -> int | None:
+    """``-1`` or ``1`` when the key's direction is specified, else ``None``."""
+    return None if key is None else KNOWN_DELAY_SIGNS.get(base_key(key))
+
 # Things that are an aggregate of other players rather than a speaker: no
 # output of their own, nothing to measure, nothing to correct.
 #
@@ -117,6 +146,15 @@ class PlayerInfo:
     was set by hand and should stay that way — all of them are perfectly
     capable, and none of them should be measured or written to.
     """
+
+    @property
+    def delay_sign(self) -> int | None:
+        """What a positive delay does to this player, when that is specified.
+
+        ``1`` delays it, ``-1`` advances it, ``None`` means only a measurement
+        can tell.
+        """
+        return known_delay_sign(self.sync_adjust_key)
 
     @property
     def supports_sync_adjust(self) -> bool:

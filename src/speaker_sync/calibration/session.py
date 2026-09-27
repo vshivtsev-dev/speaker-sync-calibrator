@@ -410,6 +410,7 @@ def build_measurements(
             current_adjust_ms=by_id[player_id].sync_adjust_ms if player_id in by_id else 0,
             spread_ms=reading.spread_ms,
             delay_range_ms=by_id[player_id].delay_range_ms if player_id in by_id else None,
+            sign=by_id[player_id].delay_sign if player_id in by_id else None,
         )
         for player_id, reading in pass_.analysis.readings.items()
     ]
@@ -466,6 +467,9 @@ def observed_convention(
     advances one, and ``None`` when the evidence is too weak to say — a run
     that wrote nearly equal corrections everywhere, or a player that ignored
     the write.
+
+    Only players whose direction is not already specified count: the question
+    is what the session-wide sign should be, and it governs only them.
     """
     points = [
         (
@@ -473,7 +477,8 @@ def observed_convention(
             after.latencies_ms[correction.player_id] - before.latencies_ms[correction.player_id],
         )
         for correction in solution.corrections
-        if correction.player_id in before.latencies_ms
+        if correction.sign is None
+        and correction.player_id in before.latencies_ms
         and correction.player_id in after.latencies_ms
     ]
     if len(points) < 2:

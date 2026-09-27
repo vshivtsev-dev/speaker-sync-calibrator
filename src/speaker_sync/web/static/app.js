@@ -420,6 +420,7 @@ async function refreshPlayers() {
   const data = await response.json();
   players = data.players;
   session = data;
+  el('probe').hidden = !data.sign_needed;
 
   const chirps = el('chirps');
   chirps.min = data.chirps_range[0];
