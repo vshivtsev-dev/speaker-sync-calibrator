@@ -79,6 +79,34 @@ class NotConnected(RuntimeError):
     """Music Assistant has not been reached (yet)."""
 
 
+class NeedsSetting(RuntimeError):
+    """A connection failure that a setting fixes, and which setting.
+
+    Raised by a ``connect`` that knows where its settings come from — the
+    add-on does — so the page can point at the field rather than leave the
+    user to work it out from a network error.
+    """
+
+    def __init__(self, message: str, setting: str) -> None:
+        super().__init__(message)
+        self.setting = setting
+
+
+def _setting_hint(setting: str) -> str:
+    """Where to fix it: the add-on's Configuration tab, and which field."""
+    names = {
+        "ma_token": say(en="Music Assistant token", ru="Токен Music Assistant"),
+        "ma_url": say(en="Music Assistant URL", ru="Адрес Music Assistant"),
+    }
+    name = names.get(setting, setting)
+    return say(
+        en=f"Fill in “{name}” on the add-on's Configuration tab "
+        "(Settings → Add-ons → Speaker Sync Calibrator → Configuration), then restart it.",
+        ru=f"Заполните «{name}» на вкладке «Конфигурация» аддона "
+        "(Настройки → Дополнения → Speaker Sync Calibrator → Конфигурация) и перезапустите его.",
+    )
+
+
 @dataclass
 class AppState:
     backend: SpeakerBackend | None = None
@@ -88,6 +116,9 @@ class AppState:
 
     connection_problem: str | None = None
     """Why the last attempt to reach Music Assistant failed."""
+
+    connection_setting: str | None = None
+    """The setting that would fix it, when the ``connect`` knows."""
 
     session_config: SessionConfig = field(default_factory=SessionConfig)
     audio_base_url: str = ""
@@ -145,6 +176,11 @@ class AppState:
         return self.backend
 
     def not_connected_message(self) -> str:
+        if self.connection_setting:
+            return say(
+                en=f"Cannot reach Music Assistant: {self.connection_problem}",
+                ru=f"Не удаётся подключиться к Music Assistant: {self.connection_problem}",
+            ) + "\n\n" + _setting_hint(self.connection_setting)
         if self.connection_problem:
             return say(
                 en="Cannot reach Music Assistant yet: "
@@ -712,6 +748,7 @@ async def keep_trying(
             state.backend = await connect()
         except Exception as error:
             state.connection_problem = str(error) or type(error).__name__
+            state.connection_setting = getattr(error, "setting", None)
             logger.warning(
                 "Music Assistant not reachable: %s — retrying in %.0fs",
                 state.connection_problem,
@@ -720,6 +757,7 @@ async def keep_trying(
             await sleep(retry_seconds)
         else:
             state.connection_problem = None
+            state.connection_setting = None
 
 
 async def serve(

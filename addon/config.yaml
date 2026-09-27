@@ -34,9 +34,13 @@ watchdog: http://[HOST]:[PORT:8080]/healthz
 
 options:
   language: auto
+# ma_token is the one thing that cannot be discovered, so it is required:
+# Home Assistant then lists it under "Required" on the Configuration tab and
+# refuses to start the add-on without it, rather than starting one that can
+# only report that Music Assistant turned it away.
 schema:
   language: list(auto|en|ru)
   ma_url: url?
-  ma_token: password?
+  ma_token: password
   audio_base_url: url?
   access_token: password?

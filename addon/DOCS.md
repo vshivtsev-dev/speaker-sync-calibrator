@@ -6,12 +6,17 @@ measured correction into each player's delay setting.
 
 ## Setup with the Music Assistant add-on
 
-1. Install and start the add-on. It finds the Music Assistant add-on on its
-   own, and gives Music Assistant its internal address to fetch the test track
-   from — nothing to configure.
-2. If your Music Assistant server requires authentication, create a token in
-   Music Assistant and put it in **Music Assistant token**.
-3. Open **Speaker Sync Calibrator** from the sidebar on your phone.
+1. Install the add-on. It finds the Music Assistant add-on on its own, and
+   gives Music Assistant its internal address to fetch the test track from.
+2. **Required:** create a long-lived token in the Music Assistant web
+   interface (your user profile) and put it in **Music Assistant token** on
+   the **Configuration** tab. It is the one thing that cannot be discovered,
+   and Home Assistant will not start the add-on without it.
+3. Start the add-on and open **Speaker Sync Calibrator** from the sidebar on
+   your phone.
+
+If Music Assistant cannot be reached, the panel says why and which field on
+the **Configuration** tab to fix; it keeps retrying in the background.
 
 The panel is served through ingress, so it uses your Home Assistant login and
 its HTTPS. HTTPS matters: browsers only offer the microphone to a secure page.

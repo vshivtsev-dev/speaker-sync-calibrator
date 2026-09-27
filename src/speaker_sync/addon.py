@@ -147,15 +147,24 @@ def music_assistant_connector(env: dict[str, str], info: AddonInfo):
     """Connect to Music Assistant, looking for the add-on again if need be."""
     from speaker_sync.cli import connect_music_assistant
 
+    from speaker_sync.web.app import NeedsSetting
+
+    token = env["SPEAKER_SYNC_MA_TOKEN"] or None
+
     async def connect():
         ma_url = env["SPEAKER_SYNC_MA_URL"] or await asyncio.to_thread(
             find_music_assistant, info
         )
         if not ma_url:
-            raise RuntimeError(MUSIC_ASSISTANT_NOT_FOUND)
-        return await connect_music_assistant(
-            ma_url.rstrip("/"), env["SPEAKER_SYNC_MA_TOKEN"] or None
-        )
+            raise NeedsSetting(MUSIC_ASSISTANT_NOT_FOUND, "ma_url")
+        try:
+            return await connect_music_assistant(ma_url.rstrip("/"), token)
+        except Exception as error:
+            # Without a token the token is the likeliest cause, whatever the
+            # error says; with one, a refusal still points back at it.
+            if token is None:
+                raise NeedsSetting(str(error), "ma_token") from error
+            raise
 
     return connect
 

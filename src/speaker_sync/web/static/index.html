@@ -95,6 +95,8 @@
   .pill.off { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
 
   .status { display: flex; align-items: center; gap: 10px; min-height: 22px; }
+  /* Server messages may carry a blank line before a "how to fix it" part. */
+  #status { white-space: pre-line; }
   .dot {
     width: 9px; height: 9px; border-radius: 50%;
     background: var(--muted); flex: none;

@@ -707,3 +707,16 @@ async def test_music_assistant_is_retried_until_it_answers():
     assert len(attempts) == 3
     assert state.backend is backend
     assert state.connection_problem is None
+
+
+async def test_the_page_names_the_setting_to_fill_in():
+    state = make_state()
+    state.backend = None
+    state.connection_problem = "401 unauthorized"
+    state.connection_setting = "ma_token"
+    async with await client_for(create_app(state)) as client:
+        text = await (await client.get("/api/players", headers={"Accept-Language": "ru"})).text()
+
+    assert "401 unauthorized" in text
+    assert "«Токен Music Assistant»" in text
+    assert "Конфигурация" in text
