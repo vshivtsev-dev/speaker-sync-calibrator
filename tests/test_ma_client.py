@@ -576,7 +576,7 @@ async def test_stop_is_forwarded(backend):
 # ----------------------------------------------------------------- connecting
 
 
-def _install_fake_library(monkeypatch, *, ready: bool):
+def _install_fake_library(monkeypatch, *, ready: bool, fail: Exception | None = None):
     """Put a stand-in library in place of the optional dependency."""
     started = {"listening": False}
 
@@ -589,6 +589,8 @@ def _install_fake_library(monkeypatch, *, ready: bool):
 
         async def start_listening(self, init_ready=None):
             started["listening"] = True
+            if fail is not None:
+                raise fail
             if ready and init_ready is not None:
                 init_ready.set()
             await asyncio.sleep(3600)
@@ -613,6 +615,15 @@ async def test_connect_starts_the_read_loop(monkeypatch):
         assert [p.player_id for p in await adapter.list_players()] == ["esp32"]
     finally:
         await adapter.close()
+
+
+async def test_a_refused_connection_fails_at_once(monkeypatch):
+    """Not after the whole timeout: the add-on page shows the reason, and it
+    should not take half a minute to appear."""
+    _install_fake_library(monkeypatch, ready=False, fail=ConnectionRefusedError("refused"))
+
+    with pytest.raises(ConnectionRefusedError, match="refused"):
+        await asyncio.wait_for(MusicAssistantBackend.connect("http://ma:8095", timeout=60), 1)
 
 
 async def test_connect_gives_up_with_a_useful_message(monkeypatch):

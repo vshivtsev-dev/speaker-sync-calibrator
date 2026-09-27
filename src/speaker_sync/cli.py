@@ -112,9 +112,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 async def _serve(args) -> int:
-    from speaker_sync.ma.client import MusicAssistantBackend
-    from speaker_sync.web.app import AppState, serve
-
     missing_config = [
         name
         for name, value in (
@@ -128,18 +125,29 @@ async def _serve(args) -> int:
             print(f"Missing required setting: {name}", file=sys.stderr)
         return 2
 
-    print(f"Connecting to Music Assistant at {args.ma_url} …")
-    try:
-        backend = await MusicAssistantBackend.connect(args.ma_url, token=args.token)
-    except Exception as error:
-        print(f"Could not connect: {error}", file=sys.stderr)
-        return 1
+    return await run_server(
+        connect=lambda: connect_music_assistant(args.ma_url, args.token),
+        audio_base_url=args.audio_base_url,
+        access_token=args.access_token,
+        trusted_proxy=args.trusted_proxy,
+        language=args.language,
+        state_dir=args.state_dir,
+        host=args.host,
+        port=args.port,
+    )
 
+
+async def connect_music_assistant(ma_url: str, token: str | None):
+    """Connect and list the players once, so a bad token fails here."""
+    from speaker_sync.ma.client import MusicAssistantBackend
+
+    print(f"Connecting to Music Assistant at {ma_url} …")
+    backend = await MusicAssistantBackend.connect(ma_url, token=token)
     try:
         found = await backend.list_players()
     except Exception as error:
-        print(f"Could not list players: {error}", file=sys.stderr)
-        return 1
+        await backend.close()
+        raise RuntimeError(f"could not list players: {error}") from error
 
     players = [p for p in found if p.is_calibratable]
     print(f"Found {len(players)} calibratable player(s).")
@@ -147,25 +155,43 @@ async def _serve(args) -> int:
         if not player.is_calibratable:
             print(f"  skipping {player.name}: {player.exclusion_reason}")
     print()
+    return backend
+
+
+async def run_server(
+    *,
+    connect,
+    audio_base_url: str,
+    access_token: str | None,
+    trusted_proxy: str | None,
+    language: str,
+    state_dir: Path,
+    host: str,
+    port: int,
+) -> int:
+    """Open the port first, then keep trying Music Assistant behind it.
+
+    In that order so a proxy in front — Home Assistant's ingress above all —
+    always finds something to talk to, and the page can say what is missing.
+    """
+    from speaker_sync.calibration.profiles import ProfileStore
+    from speaker_sync.web.app import AppState, serve
 
     state = AppState(
-        backend=backend,
         session_config=SessionConfig(),
-        audio_base_url=args.audio_base_url.rstrip("/"),
-        access_token=args.access_token or None,
-        trusted_proxy=args.trusted_proxy or None,
-        language=args.language,
+        audio_base_url=audio_base_url.rstrip("/"),
+        access_token=access_token or None,
+        trusted_proxy=trusted_proxy or None,
+        language=language,
     )
 
-    from speaker_sync.calibration.profiles import ProfileStore
-
     try:
-        state.adopt_store(ProfileStore.open(args.state_dir))
+        state.adopt_store(ProfileStore.open(state_dir))
     except OSError as error:
-        print(f"Cannot use state directory {args.state_dir}: {error}", file=sys.stderr)
+        print(f"Cannot use state directory {state_dir}: {error}", file=sys.stderr)
         return 1
 
-    await serve(state, host=args.host, port=args.port)
+    await serve(state, host=host, port=port, connect=connect)
     return 0
 
 

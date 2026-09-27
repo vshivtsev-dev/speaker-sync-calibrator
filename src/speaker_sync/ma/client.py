@@ -145,17 +145,28 @@ class MusicAssistantBackend:
         # command futures, so it has to be running before anything is sent.
         ready = asyncio.Event()
         listener = asyncio.create_task(client.start_listening(ready))
+        waiting = asyncio.create_task(ready.wait())
+        # Whichever comes first: ready, or the listener giving up — a refused
+        # connection or a rejected token ends it at once, and there is no
+        # point sitting out the whole timeout after that.
         try:
-            await asyncio.wait_for(ready.wait(), timeout)
-        except TimeoutError:
+            await asyncio.wait(
+                {listener, waiting}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+        except BaseException:
+            listener.cancel()
+            raise
+        finally:
+            waiting.cancel()
+
+        if not ready.is_set():
+            if listener.done() and not listener.cancelled() and listener.exception():
+                raise listener.exception()
             listener.cancel()
             raise RuntimeError(
                 f"Music Assistant at {server_url} did not become ready within {timeout:g}s. "
                 "Check the URL, and the token if the server requires one."
-            ) from None
-        except Exception:
-            listener.cancel()
-            raise
+            )
 
         return cls(client, listener)
 

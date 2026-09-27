@@ -398,8 +398,25 @@ function nameOf(playerId) {
   return found ? found.name : playerId;
 }
 
+// While Music Assistant is out of reach the server says why with a 503; the
+// list is asked for again until it answers.
+const RECONNECT_POLL_MS = 5000;
+let reconnectTimer = null;
+
 async function refreshPlayers() {
+  clearTimeout(reconnectTimer);
   const response = await fetch('api/players');
+  if (!response.ok) {
+    players = [];
+    runnable = false;
+    refreshControls();
+    el('players').innerHTML = '';
+    setStatus((await response.text()).trim() || response.statusText, 'err');
+    if (response.status === 503) {
+      reconnectTimer = setTimeout(refreshPlayers, RECONNECT_POLL_MS);
+    }
+    return;
+  }
   const data = await response.json();
   players = data.players;
   session = data;

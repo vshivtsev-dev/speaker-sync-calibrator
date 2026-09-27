@@ -13,12 +13,12 @@ entirely, and then neither discovered address is right.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import secrets
 import sys
-import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -45,9 +45,10 @@ MUSIC_ASSISTANT_SLUGS = (
 )
 MUSIC_ASSISTANT_PORT = 8095
 
-RETRY_SECONDS = 15
-"""Pause before trying Music Assistant again. At boot the two add-ons start
-in no particular order, so a first refusal is expected rather than fatal."""
+MUSIC_ASSISTANT_NOT_FOUND = (
+    "the Music Assistant add-on was not found. Install it, or set ma_url to the "
+    "address of your Music Assistant server."
+)
 
 AddonInfo = Callable[[str], "dict | None"]
 """Look up an add-on by slug; ``None`` when it is not installed."""
@@ -113,15 +114,12 @@ def load_access_token(path: Path) -> str:
 def resolve(options: dict, info: AddonInfo, token_file: Path) -> dict[str, str]:
     """Turn add-on options plus what the Supervisor knows into ``serve``'s env.
 
-    Raises ``ValueError`` naming the option to set when something can be
-    neither discovered nor read from the options.
+    Music Assistant's address is left empty when it cannot be found: it is
+    looked for again on every connection attempt, so installing it later is
+    enough. Raises ``ValueError`` naming the option to set when this add-on's
+    own address can be neither discovered nor read from the options.
     """
-    ma_url = (options.get("ma_url") or "").strip() or find_music_assistant(info)
-    if not ma_url:
-        raise ValueError(
-            "Music Assistant add-on not found. Install it, or set ma_url to the "
-            "address of your Music Assistant server."
-        )
+    ma_url = (options.get("ma_url") or "").strip() or find_music_assistant(info) or ""
 
     audio_base_url = (options.get("audio_base_url") or "").strip() or own_address(info)
     if not audio_base_url:
@@ -145,6 +143,32 @@ def resolve(options: dict, info: AddonInfo, token_file: Path) -> dict[str, str]:
     }
 
 
+def music_assistant_connector(env: dict[str, str], info: AddonInfo):
+    """Connect to Music Assistant, looking for the add-on again if need be."""
+    from speaker_sync.cli import connect_music_assistant
+
+    from speaker_sync.web.app import NeedsSetting
+
+    token = env["SPEAKER_SYNC_MA_TOKEN"] or None
+
+    async def connect():
+        ma_url = env["SPEAKER_SYNC_MA_URL"] or await asyncio.to_thread(
+            find_music_assistant, info
+        )
+        if not ma_url:
+            raise NeedsSetting(MUSIC_ASSISTANT_NOT_FOUND, "ma_url")
+        try:
+            return await connect_music_assistant(ma_url.rstrip("/"), token)
+        except Exception as error:
+            # Without a token the token is the likeliest cause, whatever the
+            # error says; with one, a refusal still points back at it.
+            if token is None:
+                raise NeedsSetting(str(error), "ma_token") from error
+            raise
+
+    return connect
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
@@ -158,22 +182,27 @@ def main() -> int:
         print(f"Speaker Sync Calibrator: {error}", file=sys.stderr)
         return 1
 
-    print(f"Music Assistant: {env['SPEAKER_SYNC_MA_URL']}")
+    print(f"Music Assistant: {env['SPEAKER_SYNC_MA_URL'] or 'not found yet'}")
     print(f"Test track served to Music Assistant from: {env['SPEAKER_SYNC_AUDIO_BASE_URL']}")
     print(
         "Open Speaker Sync Calibrator from the Home Assistant sidebar. For direct access on the "
         f"mapped port, add ?token={env['SPEAKER_SYNC_ACCESS_TOKEN']} to the address once."
     )
-    os.environ.update(env)
 
-    from speaker_sync.cli import main as cli_main
+    from speaker_sync.cli import run_server
 
-    # ``serve`` only returns when it could not start — in practice because
-    # Music Assistant is not answering yet.
-    while True:
-        cli_main(["serve"])
-        print(f"Retrying in {RETRY_SECONDS}s …", file=sys.stderr)
-        time.sleep(RETRY_SECONDS)
+    return asyncio.run(
+        run_server(
+            connect=music_assistant_connector(env, supervisor_info),
+            audio_base_url=env["SPEAKER_SYNC_AUDIO_BASE_URL"],
+            access_token=env["SPEAKER_SYNC_ACCESS_TOKEN"],
+            trusted_proxy=env["SPEAKER_SYNC_TRUSTED_PROXY"],
+            language=env["SPEAKER_SYNC_LANGUAGE"],
+            state_dir=Path(env["SPEAKER_SYNC_STATE_DIR"]),
+            host=env["SPEAKER_SYNC_HOST"],
+            port=PORT,
+        )
+    )
 
 
 if __name__ == "__main__":

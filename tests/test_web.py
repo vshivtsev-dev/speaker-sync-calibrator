@@ -31,6 +31,7 @@ from speaker_sync.web.app import (
     TOKEN_COOKIE,
     AppState,
     create_app,
+    keep_trying,
     serve,
 )
 
@@ -203,7 +204,7 @@ async def test_ui_and_health_are_served(state):
         await client.close()
 
     assert "Speaker Sync Calibrator" in page
-    assert health == {"status": "ok"}
+    assert health == {"status": "ok", "music_assistant": True}
     # The recorder must not fall back to MediaRecorder, whose encoder delay
     # would corrupt the very thing being measured.
     assert "AudioWorkletProcessor" in worklet
@@ -669,3 +670,53 @@ async def test_serve_refuses_to_guess_the_track_address():
 
     with pytest.raises(ValueError, match="audio_base_url"):
         await serve(state)
+
+
+async def test_the_page_is_served_before_music_assistant_answers():
+    """Otherwise a proxy in front — Home Assistant's ingress — shows a bare
+    502 and nobody gets to read why."""
+    state = make_state()
+    state.backend = None
+    state.connection_problem = "token rejected."
+    async with await client_for(create_app(state)) as client:
+        assert (await client.get("/")).status == 200
+        health = await (await client.get("/healthz")).json()
+        players = await client.get("/api/players", headers={"Accept-Language": "en"})
+
+        assert health == {"status": "ok", "music_assistant": False}
+        assert players.status == 503
+        assert "token rejected." in await players.text()
+
+
+async def test_music_assistant_is_retried_until_it_answers():
+    state = make_state()
+    backend, state.backend = state.backend, None
+    attempts = []
+
+    async def connect():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise ConnectionRefusedError("refused")
+        return backend
+
+    async def no_wait(_):
+        assert state.connection_problem == "refused"
+
+    await keep_trying(state, connect, sleep=no_wait)
+
+    assert len(attempts) == 3
+    assert state.backend is backend
+    assert state.connection_problem is None
+
+
+async def test_the_page_names_the_setting_to_fill_in():
+    state = make_state()
+    state.backend = None
+    state.connection_problem = "401 unauthorized"
+    state.connection_setting = "ma_token"
+    async with await client_for(create_app(state)) as client:
+        text = await (await client.get("/api/players", headers={"Accept-Language": "ru"})).text()
+
+    assert "401 unauthorized" in text
+    assert "«Токен Music Assistant»" in text
+    assert "Конфигурация" in text

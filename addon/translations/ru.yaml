@@ -10,10 +10,11 @@ configuration:
       Оставьте пустым, чтобы использовать аддон Music Assistant. Заполните,
       если Music Assistant запущен отдельно, например http://192.168.1.10:8095.
   ma_token:
-    name: Токен Music Assistant
+    name: Токен Music Assistant (обязательно)
     description: >-
-      Долгоживущий токен из настроек Music Assistant — нужен, если сервер
-      требует авторизацию.
+      Долгоживущий токен, созданный в веб-интерфейсе Music Assistant, в
+      профиле пользователя. Без него Music Assistant не пустит к плеерам и
+      калибровать будет нечего.
   audio_base_url:
     name: Адрес Speaker Sync Calibrator для Music Assistant
     description: >-

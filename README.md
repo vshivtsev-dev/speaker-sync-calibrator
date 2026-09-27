@@ -284,8 +284,8 @@ This repository is also a Home Assistant add-on repository. In Home Assistant:
 **Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add
 `https://github.com/vshivtsev-dev/speaker-sync-calibrator`, and install **Speaker Sync Calibrator**.
 
-Next to the Music Assistant add-on it needs no configuration beyond, at most,
-a Music Assistant token:
+Next to the Music Assistant add-on it needs no configuration beyond a Music
+Assistant token, which is a required option:
 
 - Music Assistant's address is looked up through the Supervisor.
 - `SPEAKER_SYNC_AUDIO_BASE_URL` becomes the add-on's own address on the internal
