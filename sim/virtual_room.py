@@ -12,7 +12,7 @@ in the detector is genuinely exercised instead of being handed integers.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -60,6 +60,35 @@ class VirtualSpeaker:
     stumbling. The median across a round should absorb it, and the analysis
     should say it happened."""
 
+    distortion: float = 0.0
+    """Second-order nonlinearity: the speaker emits ``x + distortion * x**2``.
+
+    An overdriven cheap speaker. With an exponential sweep its harmonics
+    correlate with the reference *ahead* of the linear response — the 2nd by
+    ``T * ln 2 / ln(f_end / f_start)``, 94 ms at the default sweep — which is
+    exactly where a first-arrival detector looks."""
+
+    rate_latency_ms: tuple[tuple[int, float], ...] = ()
+    """``(track_sample_rate, extra_ms)`` — extra latency for tracks at that rate.
+
+    Models a player that resamples one format and passes the other straight
+    through, so it is calibrated right for one and off for the other."""
+
+    def latency_at_rate(self, track_rate: int | None) -> float:
+        extra = sum(ms for rate, ms in self.rate_latency_ms if rate == track_rate)
+        return self.total_latency_ms + extra
+
+    together_shift_ms: float = 0.0
+    """Extra delay while other speakers play too.
+
+    Models what the solo rounds cannot see: a player that resynchronises
+    when the rest of the group is unmuted. The together round must catch it."""
+
+    def emit(self, chirp: np.ndarray) -> np.ndarray:
+        if self.distortion == 0.0:
+            return chirp
+        return chirp + self.distortion * chirp**2
+
     def glitch_at(self, chirp_index: int) -> float:
         return sum(extra for index, extra in self.glitches if index == chirp_index)
 
@@ -73,17 +102,7 @@ class VirtualSpeaker:
         return self.hardware_latency_ms + self.acoustic_ms + self.sign * self.sync_adjust_ms
 
     def with_adjust(self, sync_adjust_ms: int) -> "VirtualSpeaker":
-        return VirtualSpeaker(
-            player_id=self.player_id,
-            name=self.name,
-            hardware_latency_ms=self.hardware_latency_ms,
-            distance_m=self.distance_m,
-            gain=self.gain,
-            sync_adjust_ms=sync_adjust_ms,
-            reflections=self.reflections,
-            sign=self.sign,
-            glitches=self.glitches,
-        )
+        return replace(self, sync_adjust_ms=sync_adjust_ms)
 
 
 @dataclass(frozen=True)
@@ -113,6 +132,9 @@ class RoomConfig:
     """Microphone clock error. Stretches the chirp grid in the recording."""
 
     clip: bool = False
+    track_rate: int | None = None
+    """Sample rate of the track being played, for :attr:`VirtualSpeaker.rate_latency_ms`."""
+
     seed: int = 0
     amplitude: float = 0.4
     reference_gain: float = field(default=1.0)
@@ -165,9 +187,10 @@ def render_recording(
 
     max_latency_ms = max(
         (
-            s.total_latency_ms
+            s.latency_at_rate(cfg.track_rate)
             + max((r[0] for r in s.reflections), default=0.0)
             + max((g[1] for g in s.glitches), default=0.0)
+            + max(s.together_shift_ms, 0.0)
             for s in speakers
         ),
         default=0.0,
@@ -186,20 +209,28 @@ def render_recording(
         # Playback time of this chirp in the stream's own timeline, which is
         # what the mute schedule is expressed against.
         moment = index * cfg.period_seconds
-        for speaker in speakers:
-            if not any(r.covers(moment) and speaker.player_id in r.audible for r in rounds):
-                continue
+        audible_now = [
+            speaker
+            for speaker in speakers
+            if any(r.covers(moment) and speaker.player_id in r.audible for r in rounds)
+        ]
+        for speaker in audible_now:
 
+            emitted = speaker.emit(chirp)
             glitch_ms = speaker.glitch_at(index)
+            if len(audible_now) > 1:
+                glitch_ms += speaker.together_shift_ms
             arrivals = [(0.0, 1.0), *speaker.reflections]
             for extra_ms, extra_gain in arrivals:
                 position = (
                     lead_in
                     + index * grid_step
-                    + (speaker.total_latency_ms + glitch_ms + extra_ms) * rate / 1000.0
+                    + (speaker.latency_at_rate(cfg.track_rate) + glitch_ms + extra_ms)
+                    * rate
+                    / 1000.0
                 )
                 whole = int(np.floor(position))
-                shifted = _fractional_shift(chirp, position - whole)
+                shifted = _fractional_shift(emitted, position - whole)
                 gain = cfg.amplitude * speaker.gain * extra_gain
                 recording[whole : whole + len(shifted)] += shifted * gain
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
@@ -58,6 +59,7 @@ class FakeMusicAssistant:
 
     _mutes: list[_MuteEvent] = field(default_factory=list, init=False)
     _muted_now: dict[str, bool] = field(default_factory=dict, init=False)
+    played_urls: list[str] = field(default_factory=list, init=False)
     _commanded_mute: dict[str, bool] = field(default_factory=dict, init=False)
     _playback_started: float | None = field(default=None, init=False)
     _playing: bool = field(default=False, init=False)
@@ -188,6 +190,11 @@ class FakeMusicAssistant:
 
     async def play_url(self, player_id: str, url: str) -> None:
         self.log.append(("play", player_id))
+        self.played_urls.append(url)
+        rate = parse_qs(urlparse(url).query).get("rate")
+        self.config = RoomConfig(
+            **{**self.config.__dict__, "track_rate": int(rate[0]) if rate else None}
+        )
         self._playback_started = self.clock.now
         self._playing = True
 

@@ -41,7 +41,7 @@ clock is the same for all of them and cancels when speakers are compared. And
 because exactly one speaker is audible at a time, one speaker's reflections
 can never be mistaken for another's direct sound.
 
-Three details carry most of the accuracy:
+Five details carry most of the accuracy:
 
 - **First arrival, not loudest.** A wall bounce arriving 8 ms late is often
   louder than the direct sound. Taking the largest correlation peak would
@@ -56,22 +56,39 @@ Three details carry most of the accuracy:
   therefore circular; a strong peak at one end of the correlation reappeared
   at the other as a phantom arrival. The correlation is zero-padded so the
   wraparound lands outside the data.
+- **A whitened correlation.** An exponential sweep has a pink spectrum, so its
+  plain autocorrelation is a wide, rippled pulse, and the first-arrival walk
+  could stop on a ripple ~0.2 ms early — or merge a table bounce 0.5 ms behind
+  the direct sound into it. Dividing by the sweep's magnitude spectrum keeps
+  the pulse clean without costing noise margin.
+- **Distortion kept out of the search.** A sweep puts an overdriven speaker's
+  harmonics *ahead* of its real arrival (94 ms for the 2nd). The search for the
+  first arrival looks at most 30 ms ahead of the loudest peak, so they never
+  pass for the direct sound.
 
 Which way each delay setting runs is taken from the specification where
 there is one, and **measured, not assumed** where there is not. After
 corrections are written the app measures again, so the result is demonstrated
-rather than asserted.
+rather than asserted — and that pass ends with every speaker playing at once,
+checked against the sum of the solo rounds, so the alignment is confirmed the
+way you will actually hear it.
+
+Why speakers are measured one at a time rather than all together on different
+tones, and what the research says about the test signal, is in
+[docs/methodology.md](docs/methodology.md).
 
 ## Accuracy
 
 Against synthetic ground truth, error stays under 1 ms:
 
-- down to −20 dB SNR (matched filtering over a 300 ms sweep buys ~30 dB)
-- with reflections *louder* than the direct sound
+- down to −20 dB SNR (correlating over a 500 ms sweep buys ~30 dB)
+- with reflections *louder* than the direct sound, and within 0.05 ms with a
+  bounce less than a millisecond behind it
+- with an overdriven, distorting speaker
 - with 200 ppm microphone clock drift
 - at 44.1 and 48 kHz, and on clipped recordings
 
-Below roughly −35 dB SNR it reports no signal rather than a number it cannot
+Below roughly −30 dB SNR it reports no signal rather than a number it cannot
 justify.
 
 ## Try it without hardware

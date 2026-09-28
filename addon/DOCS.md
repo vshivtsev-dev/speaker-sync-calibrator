@@ -49,6 +49,22 @@ access token. Set one in **Access token for direct access**, or leave it empty
 and use the generated one printed in the add-on log. Open the address once
 with `?token=…`; it is then kept in a cookie.
 
+## Still hear an echo?
+
+- **Check without changes** measures the speakers as they are, at 44.1 and
+  48 kHz, ending with every speaker playing at once, and writes nothing. It
+  shows whether the corrections hold, whether they hold with the whole group
+  playing, and whether a speaker's delay depends on the track format.
+- **Listen to clicks** plays clicks on every speaker at once for about 20 s.
+  Stand where the phone was. One sharp click means in sync; a thick or
+  ringing click means a few milliseconds apart; a double click means more
+  than about 10 ms — calibrate.
+- A calibration holds for the spot the phone was in. One metre further from
+  one speaker is 3 ms of difference: save positions for the places you listen.
+- Calibration uses 44.1 kHz, the format most music is in. If the check says
+  a speaker's delay depends on the format, 48 kHz content (video, some
+  streams) will be off by that much on that speaker.
+
 ## What is kept
 
 Saved listening positions, the probed direction of the delay setting, the

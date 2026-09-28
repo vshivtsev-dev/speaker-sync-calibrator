@@ -24,6 +24,7 @@ from sim.fake_ma import (
 )
 from speaker_sync.calibration.profiles import ProfileStore
 from speaker_sync.calibration.session import SessionConfig, calibrate
+from speaker_sync.dsp.signals import build_test_signal, to_wav_bytes
 from speaker_sync.ma.backend import PlayerInfo
 from speaker_sync.web.app import (
     MAX_CHIRPS_PER_ROUND,
@@ -80,10 +81,36 @@ async def test_track_endpoint_serves_a_real_wav(state):
     assert response.content_type == "audio/wav"
 
     with wave.open(io.BytesIO(body)) as handle:
-        assert handle.getframerate() == 48000
+        # 44.1 kHz by default: calibrated in the format most music is in.
+        assert handle.getframerate() == 44100
         assert handle.getsampwidth() == 2
         # Six chirps at the default 1.3 s period.
-        assert handle.getnframes() == pytest.approx(6 * 1.3 * 48000, rel=0.01)
+        assert handle.getnframes() == pytest.approx(6 * 1.3 * 44100, rel=0.01)
+
+
+@pytest.mark.parametrize("rate", [44100, 48000])
+async def test_the_track_is_served_at_the_rate_asked_for(state, rate):
+    client = await client_for(create_app(state))
+    try:
+        body = await (await client.get(f"/signal.wav?chirps=4&rate={rate}")).read()
+    finally:
+        await client.close()
+
+    with wave.open(io.BytesIO(body)) as handle:
+        assert handle.getframerate() == rate
+
+
+async def test_the_listening_track_is_a_real_wav_of_clicks(state):
+    client = await client_for(create_app(state))
+    try:
+        response = await client.get("/listen.wav")
+        body = await response.read()
+    finally:
+        await client.close()
+
+    assert response.status == 200
+    with wave.open(io.BytesIO(body)) as handle:
+        assert 15.0 < handle.getnframes() / handle.getframerate() < 30.0
 
 
 async def test_track_length_follows_the_requested_chirp_count(state):
@@ -97,7 +124,33 @@ async def test_track_length_follows_the_requested_chirp_count(state):
     assert len(long) > len(short) * 2.5
 
 
-@pytest.mark.parametrize("query", ["?chirps=0", "?chirps=9999", "?chirps=abc"])
+async def test_cached_track_is_exactly_a_fresh_render(state):
+    """The track is served from a cache, which is only sound because it is
+    deterministic: what Music Assistant plays must be exactly the chirp grid
+    the analysis assumes."""
+    cfg = state.session_config
+    signal = build_test_signal(
+        chirp_count=6,
+        period_seconds=cfg.period_seconds,
+        chirp_seconds=cfg.chirp_seconds,
+        f_start=cfg.f_start,
+        f_end=cfg.f_end,
+        sample_rate=cfg.track_sample_rate,
+    )
+    client = await client_for(create_app(state))
+    try:
+        first = await (await client.get("/signal.wav?chirps=6")).read()
+        second = await (await client.get("/signal.wav?chirps=6")).read()
+    finally:
+        await client.close()
+
+    assert first == second == to_wav_bytes(signal.samples, signal.sample_rate)
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["?chirps=0", "?chirps=9999", "?chirps=abc", "?chirps=4&rate=22050", "?chirps=4&rate=x"],
+)
 async def test_track_endpoint_rejects_nonsense(state, query):
     client = await client_for(create_app(state))
     try:
@@ -113,7 +166,9 @@ async def test_signal_url_points_at_the_configured_address(state):
     uses, so it comes from configuration rather than from the request."""
     signal = state.session_config.build_signal(20)
 
-    assert state.signal_url(signal) == "http://speaker-sync:8080/signal.wav?chirps=20"
+    assert (
+        state.signal_url(signal) == "http://speaker-sync:8080/signal.wav?chirps=20&rate=44100"
+    )
 
 
 # ------------------------------------------------------------------- the app
@@ -509,6 +564,7 @@ async def test_track_and_health_stay_open_for_their_own_clients(guarded):
     client = await client_for(create_app(guarded))
     try:
         assert (await client.get("/signal.wav?chirps=4")).status == 200
+        assert (await client.get("/listen.wav")).status == 200
         assert (await client.get("/healthz")).status == 200
     finally:
         await client.close()
@@ -738,3 +794,17 @@ async def test_the_script_address_changes_with_its_content(state):
         assert "refreshPlayers" in await script.text()
         stale = await client.get("/assets/000000000000/app.js")
         assert stale.headers["Cache-Control"] == "no-store"
+
+
+async def test_the_listening_test_starts_over_the_socket(state):
+    client = await client_for(create_app(state))
+    try:
+        socket = await client.ws_connect("/ws")
+        await socket.send_json({"type": "listen"})
+        message = await socket.receive_json(timeout=5)
+        await socket.close()
+    finally:
+        await client.close()
+
+    assert message["type"] == "listening"
+    assert state.backend.played_urls == ["http://speaker-sync:8080/listen.wav"]

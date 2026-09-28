@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import secrets
+from functools import lru_cache
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -34,16 +35,60 @@ from aiohttp import WSMsgType, web
 from speaker_sync import i18n
 from speaker_sync.calibration.profiles import Profile, ProfileStore, apply_profile
 from speaker_sync.calibration.session import (
+    AlignmentCheck,
     CalibrationReport,
     SessionConfig,
     calibrate,
+    check_alignment,
+    play_listening_test,
 )
 from speaker_sync.calibration.validate import determine_sign
-from speaker_sync.dsp.signals import TestSignal, build_test_signal, to_wav_bytes
+from speaker_sync.dsp.signals import (
+    DEFAULT_SAMPLE_RATE,
+    SUPPORTED_TRACK_RATES,
+    TestSignal,
+    build_click_track,
+    build_test_signal,
+    to_wav_bytes,
+)
 from speaker_sync.i18n import resolve_language, say
 from speaker_sync.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@lru_cache(maxsize=8)
+def track_wav(
+    chirps: int,
+    period_seconds: float,
+    chirp_seconds: float,
+    f_start: float,
+    f_end: float,
+    sample_rate: int,
+) -> bytes:
+    """The test track, rendered once per shape and then served as a file.
+
+    Music Assistant fetches it at least twice per pass (a probe, then the
+    stream) and a calibration is two passes, so rendering on every request
+    only made the start of playback wait on numpy. The track is deterministic,
+    so a cached copy is byte-for-byte what a fresh render would produce.
+    """
+    signal = build_test_signal(
+        chirp_count=chirps,
+        period_seconds=period_seconds,
+        chirp_seconds=chirp_seconds,
+        f_start=f_start,
+        f_end=f_end,
+        sample_rate=sample_rate,
+    )
+    return to_wav_bytes(signal.samples, signal.sample_rate)
+
+
+@lru_cache(maxsize=1)
+def click_track_wav() -> bytes:
+    """The listening test: clicks on every speaker at once, judged by ear."""
+    track = build_click_track()
+    return to_wav_bytes(track, DEFAULT_SAMPLE_RATE)
 
 # Audio is uploaded as it is recorded, so by the time recording stops most of
 # it has already arrived and this covers only the tail. It still scales with
@@ -61,7 +106,7 @@ MAX_CHIRPS_PER_ROUND = 40
 
 TOKEN_COOKIE = "speaker_sync_token"
 TOKEN_COOKIE_MAX_AGE = 30 * 24 * 3600
-OPEN_PATHS = frozenset({"/signal.wav", "/healthz"})
+OPEN_PATHS = frozenset({"/signal.wav", "/listen.wav", "/healthz"})
 
 logger = logging.getLogger("speaker_sync.web")
 
@@ -195,7 +240,14 @@ class AppState:
         )
 
     def signal_url(self, signal: TestSignal) -> str:
-        return f"{self.audio_base_url}/signal.wav?chirps={signal.chirp_count}"
+        return (
+            f"{self.audio_base_url}/signal.wav"
+            f"?chirps={signal.chirp_count}&rate={signal.sample_rate}"
+        )
+
+    @property
+    def listen_url(self) -> str:
+        return f"{self.audio_base_url}/listen.wav"
 
     @property
     def speakers(self) -> SpeakerBackend:
@@ -511,16 +563,29 @@ def create_app(state: AppState) -> web.Application:
             raise web.HTTPBadRequest(reason="chirps out of range")
 
         cfg = state.session_config
-        signal = build_test_signal(
-            chirp_count=chirps,
-            period_seconds=cfg.period_seconds,
-            chirp_seconds=cfg.chirp_seconds,
-            f_start=cfg.f_start,
-            f_end=cfg.f_end,
-            sample_rate=cfg.track_sample_rate,
-        )
+        try:
+            rate = int(request.query.get("rate", str(cfg.track_sample_rate)))
+        except ValueError:
+            raise web.HTTPBadRequest(reason="rate must be an integer") from None
+        if rate not in SUPPORTED_TRACK_RATES:
+            raise web.HTTPBadRequest(reason="unsupported rate")
+
         return web.Response(
-            body=to_wav_bytes(signal.samples, signal.sample_rate),
+            body=track_wav(
+                chirps,
+                cfg.period_seconds,
+                cfg.chirp_seconds,
+                cfg.f_start,
+                cfg.f_end,
+                rate,
+            ),
+            content_type="audio/wav",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def listen_wav(request: web.Request) -> web.Response:
+        return web.Response(
+            body=click_track_wav(),
             content_type="audio/wav",
             headers={"Cache-Control": "no-store"},
         )
@@ -609,6 +674,7 @@ def create_app(state: AppState) -> web.Application:
     app.router.add_post("/api/profiles/{name}/apply", profiles_apply)
     app.router.add_delete("/api/profiles/{name}", profiles_delete)
     app.router.add_get("/signal.wav", signal_wav)
+    app.router.add_get("/listen.wav", listen_wav)
     app.router.add_get("/ws", _websocket_handler)
     app.router.add_static("/static/", STATIC_DIR)
     return app
@@ -657,7 +723,7 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
             kind = payload.get("type")
             if kind == "recording_done":
                 recorder.complete(payload.get("sample_rate", 48000))
-            elif kind in {"calibrate", "probe_sign"}:
+            elif kind in {"calibrate", "probe_sign", "check", "listen"}:
                 if running is not None and not running.done():
                     outbox.put_nowait({"type": "error", "message": _busy_message()})
                 else:
@@ -689,6 +755,22 @@ async def _run_job(
     try:
         # One view of the speakers for the whole job, switches already applied.
         speakers = state.speakers
+        if kind == "listen":
+            await play_listening_test(speakers, state.listen_url)
+            outbox.put_nowait({"type": "listening"})
+            return
+
+        if kind == "check":
+            check = await check_alignment(
+                speakers,
+                recorder,
+                config=state.session_config,
+                signal_url=state.signal_url,
+                progress=lambda event: progress({"type": "progress", **event}),
+            )
+            outbox.put_nowait({"type": "check", **describe_check(check)})
+            return
+
         if kind == "probe_sign":
             check = await determine_sign(
                 speakers,
@@ -729,6 +811,35 @@ async def _run_job(
         state.busy = False
 
 
+def describe_check(check: AlignmentCheck) -> dict:
+    """Flatten a check into something the UI can render directly."""
+    rates = list(check.passes)
+    offsets = {rate: check.offsets_ms(rate) for rate in rates}
+    together = check.together
+    return {
+        "spread_ms": round(check.spread_ms, 1),
+        "in_sync": check.in_sync,
+        "rates": rates,
+        "problems": list(check.problems),
+        "together": (
+            None
+            if together is None or not together.heard_ms
+            else {"spread_ms": round(together.spread_ms, 2), "confirmed": together.confirmed}
+        ),
+        "players": [
+            {
+                "player_id": pid,
+                "name": check.names.get(pid, pid),
+                "offsets_ms": [
+                    None if pid not in offsets[rate] else round(offsets[rate][pid], 1)
+                    for rate in rates
+                ],
+            }
+            for pid in check.names
+        ],
+    }
+
+
 def describe(report: CalibrationReport) -> dict:
     """Flatten a report into something the UI can render directly."""
     return {
@@ -741,6 +852,15 @@ def describe(report: CalibrationReport) -> dict:
         ),
         "improved": report.improved,
         "problems": list(report.problems),
+        "together": (
+            None
+            if report.together is None or not report.together.heard_ms
+            else {
+                "spread_ms": round(report.together.spread_ms, 2),
+                "solo_spread_ms": round(report.together.solo_spread_ms, 2),
+                "confirmed": report.together.confirmed,
+            }
+        ),
         "players": [
             {
                 "player_id": c.player_id,

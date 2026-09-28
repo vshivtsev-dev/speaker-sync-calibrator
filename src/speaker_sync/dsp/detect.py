@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.fft import next_fast_len
+from scipy.fft import irfft, next_fast_len, rfft
 from scipy.signal import butter, fftconvolve, hilbert, sosfiltfilt
 
 # Fraction of the window's peak that counts as "the signal has arrived".
@@ -39,6 +39,24 @@ NOISE_PEAK_MARGIN = 1.6
 # envelope of band-limited noise is Rayleigh, and we estimate its floor with a
 # median, so this converts that estimate back to the scale.
 RAYLEIGH_MEDIAN = 1.1774
+
+# How far ahead of the window's strongest point the direct sound may lie.
+# The loudest arrival can be a reflection, but one whose extra path is more
+# than ~10 m (30 ms) is not going to out-shout the direct sound in a home. The
+# bound matters because of what lies further back: with an exponential sweep a
+# speaker's harmonic distortion correlates with the reference *ahead* of the
+# linear response (Farina, AES 108, 2000) — see :func:`harmonic_lead_seconds`.
+MAX_DIRECT_LEAD_SECONDS = 0.030
+
+# Keep the search this far clear of the 2nd harmonic's position, so a sweep
+# configured shorter or wider than the default cannot slide it back in.
+HARMONIC_CLEARANCE = 0.8
+
+# Regularisation of the whitening, relative to the reference's peak power
+# density. Small enough to act across the whole sweep band, large enough that
+# the band edges — where the sweep has almost no energy — are not boosted into
+# ringing.
+WHITENING_REGULARIZATION = 1e-3
 
 # A candidate weaker than the recording's median arrival by more than this
 # factor (~34 dB) is treated as an artefact rather than a quiet speaker.
@@ -62,6 +80,27 @@ def detection_threshold(noise_floor: float, window_length: int, min_psr_db: floa
     fixed = 10.0 ** (min_psr_db / 20.0)
     expected_noise_peak = np.sqrt(2.0 * np.log(max(window_length, 2))) / RAYLEIGH_MEDIAN
     return noise_floor * max(fixed, expected_noise_peak * NOISE_PEAK_MARGIN)
+
+
+def harmonic_lead_seconds(chirp_seconds: float, f_start: float, f_end: float, order: int = 2) -> float:
+    """How far ahead of the linear response the ``order``-th harmonic appears.
+
+    An exponential sweep at ``order`` times its frequency is the same sweep
+    advanced by ``T * ln(order) / ln(f_end / f_start)``, so distortion shows
+    up in the correlation as an early copy of the arrival — 94 ms ahead for
+    the 2nd harmonic of the default 0.5 s, 150–6000 Hz sweep.
+    """
+    return chirp_seconds * np.log(order) / np.log(f_end / f_start)
+
+
+def max_direct_lead(
+    reference_length: int, sample_rate: int | None, f_start: float | None, f_end: float | None
+) -> int | None:
+    """Search depth ahead of the peak, in samples; ``None`` when unknown."""
+    if sample_rate is None or f_start is None or f_end is None:
+        return None
+    harmonic = harmonic_lead_seconds(reference_length / sample_rate, f_start, f_end)
+    return int(min(MAX_DIRECT_LEAD_SECONDS, HARMONIC_CLEARANCE * harmonic) * sample_rate)
 
 
 @dataclass(frozen=True)
@@ -125,6 +164,38 @@ def bandpass(
     return sosfiltfilt(sos, np.asarray(signal, dtype=np.float64))
 
 
+def whitening_filter(
+    reference: np.ndarray, *, regularization: float = WHITENING_REGULARIZATION
+) -> np.ndarray:
+    """The reference sweep, spectrally half-whitened, ``2 * len - 1`` taps long.
+
+    A plain matched filter returns the sweep's *autocorrelation*. An
+    exponential sweep has a pink spectrum, so that pulse is dominated by the
+    low end: it is wide and rippled, and the first-arrival walk can stop on a
+    ripple of its rising flank. On the simulator that is a ~0.2 ms bias,
+    whether from noise or from a floor or table bounce 0.3–1 ms behind the
+    direct sound.
+
+    Dividing by the sweep's power spectrum (Farina's inverse filter) flattens
+    the pulse and removes the bias, but it also lifts the noise in the band's
+    weak end and costs ~5 dB of reach. Dividing by the *magnitude* — halfway,
+    in the spirit of SCOT weighting — keeps the pulse clean at the same noise
+    reach as the matched filter. Measured on the simulator, see
+    ``docs/methodology.md``.
+
+    The kernel is laid out so that convolving with it and dropping the first
+    ``len - 1`` outputs leaves index ``i`` scoring a chirp that starts at ``i``.
+    """
+    ref = np.asarray(reference, dtype=np.float64)
+    length = len(ref)
+    size = next_fast_len(2 * length)
+    spectrum = rfft(ref, size)
+    power = np.abs(spectrum) ** 2
+    weights = np.sqrt(power + regularization * power.max())
+    kernel = irfft(np.conj(spectrum) / weights, size)
+    return np.roll(kernel, length - 1)[: 2 * length - 1]
+
+
 def correlation_envelope(
     recording: np.ndarray,
     reference: np.ndarray,
@@ -133,11 +204,32 @@ def correlation_envelope(
     f_start: float | None = None,
     f_end: float | None = None,
 ) -> np.ndarray:
-    """Matched-filter the recording and return the analytic envelope.
+    """Correlate the recording with the whitened chirp; return the envelope.
 
     Index ``i`` of the result scores a chirp *starting* at sample ``i`` of the
     recording, so positions map straight back to the recording's timeline with
     no offset to remember.
+    """
+    return np.abs(
+        analytic_correlation(
+            recording, reference, sample_rate=sample_rate, f_start=f_start, f_end=f_end
+        )
+    )
+
+
+def analytic_correlation(
+    recording: np.ndarray,
+    reference: np.ndarray,
+    *,
+    sample_rate: int | None = None,
+    f_start: float | None = None,
+    f_end: float | None = None,
+) -> np.ndarray:
+    """The correlation as a complex analytic signal, phase included.
+
+    The envelope throws the phase away, which is right for finding an arrival
+    but not for adding arrivals up: two speakers playing together interfere,
+    and only the complex signal predicts how.
     """
     rec = np.asarray(recording, dtype=np.float64)
     ref = np.asarray(reference, dtype=np.float64)
@@ -147,13 +239,14 @@ def correlation_envelope(
     if sample_rate is not None and f_start is not None and f_end is not None:
         rec = bandpass(rec, sample_rate=sample_rate, f_start=f_start, f_end=f_end)
 
-    # Correlation via convolution with the time-reversed reference.
-    correlation = fftconvolve(rec, ref[::-1], mode="valid")
-    return _analytic_envelope(correlation, pad=max(len(ref), 4096))
+    kernel = whitening_filter(ref)
+    start = len(ref) - 1
+    correlation = fftconvolve(rec, kernel, mode="full")[start : start + len(rec) - len(ref) + 1]
+    return _analytic_signal(correlation, pad=max(len(ref), 4096))
 
 
-def _analytic_envelope(signal: np.ndarray, *, pad: int) -> np.ndarray:
-    """Envelope via the analytic signal, with the wraparound kept out.
+def _analytic_signal(signal: np.ndarray, *, pad: int) -> np.ndarray:
+    """The analytic signal, with the wraparound kept out.
 
     ``scipy.signal.hilbert`` is an FFT method and therefore circular: energy
     from a strong peak at one end of the array reappears at the other. On a
@@ -165,7 +258,7 @@ def _analytic_envelope(signal: np.ndarray, *, pad: int) -> np.ndarray:
     total = next_fast_len(len(signal) + 2 * pad)
     padded = np.zeros(total, dtype=np.float64)
     padded[pad : pad + len(signal)] = signal
-    return np.abs(hilbert(padded))[pad : pad + len(signal)]
+    return hilbert(padded)[pad : pad + len(signal)]
 
 
 def _parabolic_peak(envelope: np.ndarray, index: int) -> float:
@@ -192,6 +285,7 @@ def find_first_arrival(
     noise_floor: float,
     arrival_ratio: float = DEFAULT_ARRIVAL_RATIO,
     min_psr_db: float = DEFAULT_MIN_PSR_DB,
+    max_lead: int | None = None,
 ) -> tuple[float, float] | None:
     """Locate the first arrival inside ``envelope[start:stop]``.
 
@@ -201,6 +295,11 @@ def find_first_arrival(
     We find the window's strongest point only to set a threshold, then walk
     *forward from the start of the window* to the first excursion above it.
     That is what makes a loud late reflection lose to a quieter direct sound.
+
+    ``max_lead`` bounds how far ahead of the peak that walk may start. Without
+    it, anything above the threshold anywhere earlier in the window wins —
+    including a distorting speaker's harmonics, which a sweep places ahead of
+    the real arrival.
     """
     stop = len(envelope) if stop is None else min(stop, len(envelope))
     start = max(start, 0)
@@ -223,13 +322,14 @@ def find_first_arrival(
         peak_value * arrival_ratio,
         detection_threshold(noise_floor, len(window), min_psr_db),
     )
-    above = np.flatnonzero(window[: peak_index + 1] >= threshold)
+    first = 0 if max_lead is None else max(peak_index - max_lead, 0)
+    above = np.flatnonzero(window[first : peak_index + 1] >= threshold)
     if len(above) == 0:
         return None
 
     # Climb from the first threshold crossing to the local maximum it belongs
     # to; the crossing itself sits on the rising flank, not at the top.
-    cursor = int(above[0])
+    cursor = first + int(above[0])
     while cursor + 1 <= peak_index and window[cursor + 1] >= window[cursor]:
         cursor += 1
 
@@ -279,12 +379,14 @@ def detect_arrivals(
         recording, reference, sample_rate=sample_rate, f_start=f_start, f_end=f_end
     )
     noise_floor = estimate_noise_floor(envelope)
+    lead = max_direct_lead(len(reference), sample_rate, f_start, f_end)
 
     anchor = find_first_arrival(
         envelope,
         noise_floor=noise_floor,
         arrival_ratio=arrival_ratio,
         min_psr_db=min_psr_db,
+        max_lead=lead,
     )
     if anchor is None:
         return []
@@ -312,6 +414,7 @@ def detect_arrivals(
             noise_floor=noise_floor,
             arrival_ratio=arrival_ratio,
             min_psr_db=min_psr_db,
+            max_lead=lead,
         )
         if found is None:
             continue
