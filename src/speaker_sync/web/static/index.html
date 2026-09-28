@@ -206,8 +206,22 @@
 
     <div style="margin-top:14px">
       <button id="run" data-i18n="run"></button>
+      <button id="check" class="secondary" data-i18n="check"></button>
+      <button id="listen" class="secondary" data-i18n="listen"></button>
     </div>
     <p class="note" data-i18n="run_note"></p>
+    <p class="note" data-i18n="check_note"></p>
+    <p class="note" data-i18n="listen_note"></p>
+  </div>
+
+  <div class="card hidden" id="check-result">
+    <h2 data-i18n="check_result"></h2>
+    <div>
+      <span class="headline" id="check-spread">—</span>
+      <span class="sub" style="margin:0" data-i18n="ms_spread"></span>
+    </div>
+    <table id="check-table" style="margin-top:14px"></table>
+    <div id="check-notes"></div>
   </div>
 
   <div class="card hidden" id="result">

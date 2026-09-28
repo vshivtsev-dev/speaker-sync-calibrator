@@ -23,7 +23,12 @@ DEFAULT_F_START = 150.0
 DEFAULT_F_END = 6000.0
 DEFAULT_CHIRP_SECONDS = 0.5
 DEFAULT_PERIOD_SECONDS = 1.3
-DEFAULT_SAMPLE_RATE = 48000
+DEFAULT_SAMPLE_RATE = 44100
+"""The rate most music is in. A player may resample one format and not the
+other, and then its latency differs between them — so it is calibrated in the
+format it will actually play. The check compares against 48 kHz."""
+
+SUPPORTED_TRACK_RATES = (44100, 48000)
 
 
 def exponential_sweep(
@@ -158,6 +163,41 @@ def build_test_signal(
         f_start=f_start,
         f_end=f_end,
     )
+
+
+def build_click_track(
+    *,
+    clicks: int = 40,
+    interval_seconds: float = 0.5,
+    lead_seconds: float = 1.0,
+    click_width_seconds: float = 0.00005,
+    sample_rate: int = DEFAULT_SAMPLE_RATE,
+    amplitude: float = 0.5,
+) -> np.ndarray:
+    """A track of short clicks for checking synchronisation by ear.
+
+    Played on every speaker at once, a click is the most revealing sound
+    there is: aligned speakers fuse into one sharp tick, a few milliseconds
+    apart they make it sound thick or ringing, and past ~10 ms it is heard
+    twice. Music smears all of that.
+
+    Each click is the derivative of a Gaussian — broadband, with no DC and
+    no ringing tail — a fraction of a millisecond, centred near 3 kHz.
+    """
+    sigma = click_width_seconds
+    half = int(round(5.0 * sigma * sample_rate))
+    t = np.arange(-half, half + 1, dtype=np.float64) / sample_rate
+    click = -t * np.exp(-0.5 * (t / sigma) ** 2)
+    click *= amplitude / np.max(np.abs(click))
+
+    lead = int(round(lead_seconds * sample_rate))
+    step = interval_seconds * sample_rate
+    total = lead + int(round(clicks * step)) + len(click)
+    track = np.zeros(total, dtype=np.float64)
+    for index in range(clicks):
+        start = lead + int(round(index * step))
+        track[start : start + len(click)] += click
+    return track
 
 
 def to_wav_bytes(samples: np.ndarray, sample_rate: int, *, channels: int = 2) -> bytes:

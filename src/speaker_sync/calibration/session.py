@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import numpy as np
@@ -693,3 +693,196 @@ async def calibrate(
         # learns nothing from the repetition. dict preserves first-seen order.
         problems=tuple(dict.fromkeys(problems)),
     )
+
+
+# ------------------------------------------------------------------ diagnosis
+
+AUDIBLE_SPREAD_MS = 2.0
+"""A spread past this is worth calibrating away."""
+
+ECHO_SPREAD_MS = 20.0
+"""Past this the second speaker is heard as a separate echo, not as colour."""
+
+FORMAT_SHIFT_TOLERANCE_MS = 1.0
+"""A latency that differs by more than this between track formats means a
+correction can only suit one of them."""
+
+CHECK_RATES = (44100, 48000)
+
+
+@dataclass(frozen=True)
+class AlignmentCheck:
+    """How the speakers line up right now, measured without changing anything."""
+
+    passes: dict[int, MeasurementPass]
+    """One pass per track sample rate, the first being the one music uses."""
+
+    names: dict[str, str]
+    problems: tuple[str, ...] = field(default=())
+
+    @property
+    def main(self) -> MeasurementPass:
+        return next(iter(self.passes.values()))
+
+    @property
+    def spread_ms(self) -> float:
+        return self.main.relative_spread_ms()
+
+    @property
+    def together(self) -> TogetherCheck | None:
+        return self.main.together
+
+    def offsets_ms(self, rate: int) -> dict[str, float]:
+        """Each speaker's arrival after the earliest one, at ``rate``."""
+        latencies = self.passes[rate].latencies_ms
+        if not latencies:
+            return {}
+        earliest = min(latencies.values())
+        return {pid: value - earliest for pid, value in latencies.items()}
+
+    @property
+    def format_shift_ms(self) -> dict[str, float]:
+        """How much later each speaker lands at the other rates than at the main one.
+
+        Measured against the first speaker, as a difference of differences:
+        every pass has its own arbitrary origin, and only comparing speakers
+        within a pass cancels it.
+        """
+        rates = list(self.passes)
+        main = self.passes[rates[0]].latencies_ms
+        shifts: dict[str, float] = {}
+        for rate in rates[1:]:
+            other = self.passes[rate].latencies_ms
+            common = [pid for pid in main if pid in other]
+            if len(common) < 2:
+                continue
+            base = common[0]
+            for pid in common[1:]:
+                shift = (other[pid] - other[base]) - (main[pid] - main[base])
+                if abs(shift) > abs(shifts.get(pid, 0.0)):
+                    shifts[pid] = shift
+        return shifts
+
+    @property
+    def in_sync(self) -> bool:
+        return not self.problems and self.spread_ms <= AUDIBLE_SPREAD_MS
+
+
+async def check_alignment(
+    backend: SpeakerBackend,
+    recorder: Recorder,
+    *,
+    config: SessionConfig | None = None,
+    signal_url="",
+    sample_rates: Sequence[int] = CHECK_RATES,
+    sleep: Sleeper = asyncio.sleep,
+    progress: ProgressCallback | None = None,
+) -> AlignmentCheck:
+    """Measure the group as it stands, in each track format, and write nothing.
+
+    This is what answers "I still hear an echo": whether the corrections in
+    force hold, whether they hold with everyone playing, and whether a
+    speaker's latency depends on the format of what it plays — the one thing
+    a calibration in a single format cannot see.
+    """
+    cfg = config or SessionConfig()
+    players = [p for p in await backend.list_players() if p.is_calibratable]
+    if len(players) < 2:
+        raise ValueError(
+            say(
+                en="need at least two speakers that make a sound and have a delay setting",
+                ru="нужно хотя бы две колонки, которые звучат и имеют настройку задержки",
+            )
+        )
+
+    passes: dict[int, MeasurementPass] = {}
+    problems: list[str] = []
+    for rate in sample_rates:
+        _report(progress, stage="pass", which="check", rate=rate, players=len(players))
+        pass_ = await measure_once(
+            backend,
+            recorder,
+            players,
+            config=replace(cfg, track_sample_rate=rate),
+            signal_url=signal_url,
+            sleep=sleep,
+            progress=progress,
+            together=True,
+        )
+        passes[rate] = pass_
+        problems.extend(pass_.analysis.problems)
+        if pass_.together is not None:
+            problems.extend(pass_.together.problems)
+
+    names = {p.player_id: p.name for p in players}
+    check = AlignmentCheck(passes=passes, names=names)
+
+    spread = check.spread_ms
+    if spread > ECHO_SPREAD_MS:
+        problems.append(
+            say(
+                en=f"the speakers are {spread:.0f} ms apart right now — that is heard as an "
+                "echo. Run a calibration.",
+                ru=f"колонки сейчас расходятся на {spread:.0f} мс — это слышно как эхо. "
+                "Запустите калибровку.",
+            )
+        )
+    elif spread > AUDIBLE_SPREAD_MS:
+        problems.append(
+            say(
+                en=f"the speakers are {spread:.1f} ms apart right now — run a calibration.",
+                ru=f"колонки сейчас расходятся на {spread:.1f} мс — запустите калибровку.",
+            )
+        )
+
+    main_rate, *other_rates = list(passes)
+    for pid, shift in check.format_shift_ms.items():
+        if abs(shift) <= FORMAT_SHIFT_TOLERANCE_MS:
+            continue
+        other = ", ".join(f"{r / 1000:g}" for r in other_rates)
+        direction_en = "later" if shift > 0 else "earlier"
+        direction_ru = "позже" if shift > 0 else "раньше"
+        problems.append(
+            say(
+                en=f"«{names.get(pid, pid)}» plays {abs(shift):.1f} ms {direction_en} at "
+                f"{other} kHz than at {main_rate / 1000:g} kHz — its latency depends on the "
+                "format, so one correction cannot suit both. Calibration uses "
+                f"{main_rate / 1000:g} kHz, the format most music is in.",
+                ru=f"«{names.get(pid, pid)}» на {other} кГц звучит на {abs(shift):.1f} мс "
+                f"{direction_ru}, чем на {main_rate / 1000:g} кГц — её задержка зависит от "
+                "формата, и одна поправка не подойдёт обоим. Калибровка идёт на "
+                f"{main_rate / 1000:g} кГц — в этом формате большая часть музыки.",
+            )
+        )
+
+    return replace(check, problems=tuple(dict.fromkeys(problems)))
+
+
+async def play_listening_test(
+    backend: SpeakerBackend,
+    url: str,
+    *,
+    sleep: Sleeper = asyncio.sleep,
+) -> list[PlayerInfo]:
+    """Play the click track on every speaker at once, for judging by ear.
+
+    Nothing is recorded: the listener is the instrument. The speakers are
+    grouped and unmuted exactly as for a measurement, so what is heard is what
+    the calibration aligned.
+    """
+    players = [p for p in await backend.list_players() if p.is_calibratable]
+    if len(players) < 2:
+        raise ValueError(
+            say(
+                en="need at least two speakers to compare",
+                ru="для сравнения нужно хотя бы две колонки",
+            )
+        )
+    player_ids = [p.player_id for p in players]
+    leader = player_ids[0]
+    await backend.set_group(leader, player_ids)
+    await confirm_group(backend, leader, player_ids, sleep=sleep)
+    for player_id in player_ids:
+        await backend.set_muted(player_id, False)
+    await backend.play_url(leader, url)
+    return players

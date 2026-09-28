@@ -68,6 +68,16 @@ class VirtualSpeaker:
     ``T * ln 2 / ln(f_end / f_start)``, 94 ms at the default sweep — which is
     exactly where a first-arrival detector looks."""
 
+    rate_latency_ms: tuple[tuple[int, float], ...] = ()
+    """``(track_sample_rate, extra_ms)`` — extra latency for tracks at that rate.
+
+    Models a player that resamples one format and passes the other straight
+    through, so it is calibrated right for one and off for the other."""
+
+    def latency_at_rate(self, track_rate: int | None) -> float:
+        extra = sum(ms for rate, ms in self.rate_latency_ms if rate == track_rate)
+        return self.total_latency_ms + extra
+
     together_shift_ms: float = 0.0
     """Extra delay while other speakers play too.
 
@@ -122,6 +132,9 @@ class RoomConfig:
     """Microphone clock error. Stretches the chirp grid in the recording."""
 
     clip: bool = False
+    track_rate: int | None = None
+    """Sample rate of the track being played, for :attr:`VirtualSpeaker.rate_latency_ms`."""
+
     seed: int = 0
     amplitude: float = 0.4
     reference_gain: float = field(default=1.0)
@@ -174,7 +187,7 @@ def render_recording(
 
     max_latency_ms = max(
         (
-            s.total_latency_ms
+            s.latency_at_rate(cfg.track_rate)
             + max((r[0] for r in s.reflections), default=0.0)
             + max((g[1] for g in s.glitches), default=0.0)
             + max(s.together_shift_ms, 0.0)
@@ -212,7 +225,9 @@ def render_recording(
                 position = (
                     lead_in
                     + index * grid_step
-                    + (speaker.total_latency_ms + glitch_ms + extra_ms) * rate / 1000.0
+                    + (speaker.latency_at_rate(cfg.track_rate) + glitch_ms + extra_ms)
+                    * rate
+                    / 1000.0
                 )
                 whole = int(np.floor(position))
                 shifted = _fractional_shift(emitted, position - whole)

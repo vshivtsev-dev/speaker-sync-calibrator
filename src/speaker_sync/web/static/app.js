@@ -43,6 +43,19 @@ const STRINGS = {
       + ' which the measurement relies on, work.',
     result: 'Result',
     ms_spread: 'ms spread',
+    check: 'Check without changes',
+    check_note: '“Check” measures the speakers as they are now, at 44.1 and 48 kHz, with'
+      + ' every speaker together at the end — and changes nothing. It shows whether the'
+      + ' corrections hold, and whether a speaker\'s delay depends on the track format.',
+    listen: 'Listen to clicks',
+    listen_note: '“Listen” plays clicks on every speaker at once for about 20 s — no'
+      + ' microphone. Stand where the phone was. One sharp click: in sync. A thick or'
+      + ' ringing click: a few ms apart. A double “tr-ack”: more than ~10 ms, calibrate.',
+    listening: 'Clicks are playing on every speaker. One sharp click means in sync;'
+      + ' a double click means they are apart.',
+    check_result: 'Check',
+    offset_from_first: 'after the earliest',
+    in_sync: 'In sync: the corrections hold, in both formats and with every speaker playing.',
     save_placeholder: 'Position name, e.g. “sofa”',
     save: 'Save',
     positions: 'Positions',
@@ -125,6 +138,20 @@ const STRINGS = {
       + ' работают мьют и группа, на которых держится замер.',
     result: 'Результат',
     ms_spread: 'мс разброса',
+    check: 'Проверить без изменений',
+    check_note: '«Проверить» меряет колонки как есть, на 44,1 и 48 кГц, в конце — все вместе,'
+      + ' и ничего не меняет. Видно, держатся ли поправки и не зависит ли задержка'
+      + ' колонки от формата трека.',
+    listen: 'Послушать щелчки',
+    listen_note: '«Послушать» играет щелчки на всех колонках сразу, около 20 с, без'
+      + ' микрофона. Встаньте туда, где лежал телефон. Один чёткий щелчок — синхронно.'
+      + ' «Толстый» или звенящий — расхождение в несколько мс. Двойной «тр-ак» — больше'
+      + ' ~10 мс, нужна калибровка.',
+    listening: 'Щелчки играют на всех колонках. Один чёткий щелчок — синхронно;'
+      + ' двойной — колонки расходятся.',
+    check_result: 'Проверка',
+    offset_from_first: 'после самой ранней',
+    in_sync: 'Синхронно: поправки держатся — в обоих форматах и когда играют все сразу.',
     save_placeholder: 'Название позиции, например «диван»',
     save: 'Сохранить',
     positions: 'Позиции',
@@ -233,6 +260,8 @@ let runnable = false;  // enough speakers are switched on to run one
 // to switch it back on again.
 function refreshControls() {
   el('run').disabled = busy || !runnable;
+  el('check').disabled = busy || !runnable;
+  el('listen').disabled = busy || !runnable;
   el('refresh').disabled = busy;
   document.querySelectorAll('#players .toggle').forEach((b) => { b.disabled = busy; });
 }
@@ -325,6 +354,17 @@ function handle(message) {
       refreshPlayers();
       break;
 
+    case 'check':
+      showCheck(message);
+      setBusy(false);
+      refreshPlayers();
+      break;
+
+    case 'listening':
+      setStatus(t('listening'), 'ok');
+      setBusy(false);
+      break;
+
     case 'report':
       showReport(message);
       setBusy(false);
@@ -345,9 +385,10 @@ let passSpan = 1;
 
 function onProgress(message) {
   if (message.stage === 'pass') {
-    // Two passes when verifying: measure, then prove.
-    passOffset = message.which === 'after' ? 0.5 : 0;
-    passSpan = message.which === 'after' ? 0.5 : 0.5;
+    // Two passes either way: measure then prove, or one per track format.
+    const second = message.which === 'after' || message.rate === 48000;
+    passOffset = second ? 0.5 : 0;
+    passSpan = 0.5;
     setStatus(t(message.which === 'after' ? 'verifying' : 'measuring'), 'live');
   } else if (message.stage === 'round') {
     setProgress(passOffset + passSpan * (message.round / message.rounds));
@@ -562,6 +603,45 @@ function showReport(report) {
             report.improved ? 'ok' : 'err');
 }
 
+function showCheck(check) {
+  el('check-result').classList.remove('hidden');
+  setProgress(1);
+
+  const spread = el('check-spread');
+  spread.textContent = check.spread_ms.toFixed(check.spread_ms < 10 ? 1 : 0);
+  spread.className = 'headline ' + (check.in_sync ? 'good' : 'bad');
+
+  const khz = (rate) => `${(rate / 1000).toLocaleString(LANG)} ${LANG === 'ru' ? 'кГц' : 'kHz'}`;
+  el('check-table').innerHTML =
+    `<thead><tr><th>${t('speaker')}</th>`
+    + check.rates.map((r) => `<th>${khz(r)}</th>`).join('')
+    + `</tr></thead><tbody>` +
+    check.players.map((p) => `
+      <tr>
+        <td>${escapeHtml(p.name)}</td>
+        ${p.offsets_ms.map((v) => `<td class="num">${
+          v === null ? '—' : `+${v.toFixed(1)} ${t('ms')}`}</td>`).join('')}
+      </tr>`).join('') + '</tbody>'
+    + `<caption class="sub">${t('offset_from_first')}</caption>`;
+
+  const notes = check.problems.map((p) => ['bad', p]);
+  if (check.in_sync) notes.push(['', t('in_sync')]);
+  if (check.together && check.together.confirmed) {
+    notes.push(['', t('together_ok', { spread: check.together.spread_ms.toFixed(1) })]);
+  }
+  el('check-notes').innerHTML = notes
+    .map(([kind, text]) => `<p class="note ${kind}">${escapeHtml(text)}</p>`)
+    .join('');
+
+  setStatus(t(check.in_sync ? 'done' : 'done_with_notes'), check.in_sync ? 'ok' : 'err');
+}
+
+async function listen() {
+  setBusy(true);
+  setStatus(t('listening'), 'live');
+  socket.send(JSON.stringify({ type: 'listen' }));
+}
+
 // ----------------------------------------------------------------- profiles
 
 async function refreshProfiles() {
@@ -671,6 +751,8 @@ async function start(kind) {
 
 el('chirps').addEventListener('input', describeRoundLength);
 el('run').addEventListener('click', () => start('calibrate'));
+el('check').addEventListener('click', () => start('check'));
+el('listen').addEventListener('click', listen);
 el('save').addEventListener('click', saveProfile);
 el('refresh').addEventListener('click', refreshPlayers);
 

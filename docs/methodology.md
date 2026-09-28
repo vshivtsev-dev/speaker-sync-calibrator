@@ -202,6 +202,32 @@ it still confirms the result in the tests.
 verification pass rather than replacing it: what only it can see is a
 difference between speakers playing alone and playing together.
 
+## When it still sounds out of sync
+
+A calibration is a snapshot, taken in one format from one spot. Three things
+can make music sound out of step afterwards, and the app can tell them
+apart:
+
+- **The corrections do not hold.** For example, a write was ignored, or a
+  latency changed after a reconnect. **Check without changes** measures the
+  group as it stands and writes nothing: a spread of tens of milliseconds
+  there is the echo you hear.
+- **The format matters.** A player that resamples one sample rate and passes
+  the other straight through has a different latency for each. The test
+  track used to be 48 kHz while most music is 44.1 kHz, so a calibration
+  could be right for the chirps and wrong for the music. Calibration now uses
+  44.1 kHz. The check measures both rates and names any speaker whose delay
+  differs between them by more than 1 ms. The comparison is a difference of
+  differences between speakers, because each pass has its own time origin.
+- **The listener is elsewhere.** The alignment is exact for the phone's
+  spot; a metre of difference in distance is 2.9 ms anywhere else.
+
+For judging by ear, **Listen to clicks** plays short clicks (the
+derivative of a Gaussian, centred near 3 kHz) on every speaker at once. A
+click is the most revealing sound for this: in sync it stays one sharp tick,
+a few milliseconds apart it thickens or rings, and beyond ~10 ms it is heard
+twice. Music smears all of that.
+
 ## Known limits
 
 - A speaker's direct sound more than ~6 dB below its own loudest reflection is

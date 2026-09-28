@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+- **Check without changes**: measures the speakers as they are, at 44.1 and 48 kHz and all together, and writes nothing.
+- **Listen to clicks**: clicks on every speaker at once to judge sync by ear.
+- Calibration now uses 44.1 kHz, the format most music is in; the check warns about a speaker whose delay depends on the format.
+
 ## 0.1.7
 - The verification pass ends with every speaker playing at once and checks that they line up together as they did one by one (about 6.5 s longer).
 
