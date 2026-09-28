@@ -33,7 +33,8 @@ from speaker_sync.calibration.solver import (
     PlayerMeasurement,
     solve,
 )
-from speaker_sync.dsp.detect import detect_arrivals
+from speaker_sync.calibration.together import TogetherCheck, check_together
+from speaker_sync.dsp.detect import analytic_correlation, detect_arrivals
 from speaker_sync.dsp.signals import (
     DEFAULT_CHIRP_SECONDS,
     DEFAULT_F_END,
@@ -125,6 +126,9 @@ class MeasurementPass:
     rounds: tuple[RoundPlan, ...]
     signal: TestSignal
     sample_rate: int
+    together: TogetherCheck | None = None
+    """How the speakers lined up with all of them playing, when the pass
+    ended with such a round."""
 
     @property
     def latencies_ms(self) -> dict[str, float]:
@@ -168,6 +172,10 @@ class CalibrationReport:
     def spread_after_ms(self) -> float | None:
         return self.after.relative_spread_ms() if self.after else None
 
+    @property
+    def together(self) -> TogetherCheck | None:
+        return self.after.together if self.after else None
+
 
 async def measure_once(
     backend: SpeakerBackend,
@@ -179,15 +187,22 @@ async def measure_once(
     signal_url="",
     sleep: Sleeper = asyncio.sleep,
     progress: ProgressCallback | None = None,
+    together: bool = False,
 ) -> MeasurementPass:
-    """Run one acoustic pass and return a latency per speaker."""
+    """Run one acoustic pass and return a latency per speaker.
+
+    ``together`` ends the pass with every speaker audible at once and checks
+    that round against the solo ones.
+    """
     cfg = config or SessionConfig()
     if len(players) < 2:
         raise ValueError("need at least two players to calibrate")
 
     player_ids = [p.player_id for p in players]
     reference = reference_id or player_ids[0]
-    rounds = plan_rounds(reference, player_ids, chirps_per_round=cfg.chirps_per_round)
+    rounds = plan_rounds(
+        reference, player_ids, chirps_per_round=cfg.chirps_per_round, together=together
+    )
     signal = cfg.build_signal(total_chirps(rounds))
 
     leader = player_ids[0]
@@ -220,7 +235,12 @@ async def measure_once(
     try:
         await backend.play_url(leader, _resolve_url(signal_url, signal))
         for index, plan in enumerate(rounds):
-            if plan.player_id != audible:
+            if plan.is_together:
+                for player_id in player_ids:
+                    if player_id != audible:
+                        await backend.set_muted(player_id, False)
+                audible = None
+            elif plan.player_id != audible:
                 if audible is not None:
                     await backend.set_muted(audible, True)
                 await backend.set_muted(plan.player_id, False)
@@ -257,11 +277,30 @@ async def measure_once(
     )
     analysis = analyze(arrivals, rounds, sample_rate=sample_rate, guard_chirps=cfg.guard_chirps)
 
+    check = None
+    if together:
+        check = check_together(
+            analytic_correlation(
+                recording,
+                signal.reference(sample_rate),
+                sample_rate=sample_rate,
+                f_start=cfg.f_start,
+                f_end=cfg.f_end,
+            ),
+            arrivals,
+            rounds,
+            analysis,
+            period_samples=cfg.period_seconds * sample_rate,
+            sample_rate=sample_rate,
+            guard_chirps=cfg.guard_chirps,
+        )
+
     return MeasurementPass(
         analysis=analysis,
         rounds=tuple(rounds),
         signal=signal,
         sample_rate=sample_rate,
+        together=check,
     )
 
 
@@ -604,6 +643,7 @@ async def calibrate(
             signal_url=signal_url,
             sleep=sleep,
             progress=progress,
+            together=True,
         )
         problems.extend(after.analysis.problems)
 
@@ -626,6 +666,9 @@ async def calibrate(
                 )
             )
             continue
+
+        if after.together is not None:
+            problems.extend(after.together.problems)
 
         if after.relative_spread_ms() > before.relative_spread_ms():
             problems.append(

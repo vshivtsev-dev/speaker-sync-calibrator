@@ -768,6 +768,15 @@ def describe(report: CalibrationReport) -> dict:
         ),
         "improved": report.improved,
         "problems": list(report.problems),
+        "together": (
+            None
+            if report.together is None or not report.together.heard_ms
+            else {
+                "spread_ms": round(report.together.spread_ms, 2),
+                "solo_spread_ms": round(report.together.solo_spread_ms, 2),
+                "confirmed": report.together.confirmed,
+            }
+        ),
         "players": [
             {
                 "player_id": c.player_id,

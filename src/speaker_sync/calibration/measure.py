@@ -37,6 +37,9 @@ DEFAULT_GUARD_CHIRPS = 2
 # something moved.
 OUTLIER_TOLERANCE_MS = 2.0
 
+TOGETHER = "*"
+"""Player id of the round in which every speaker plays at once."""
+
 
 @dataclass(frozen=True)
 class RoundPlan:
@@ -46,6 +49,9 @@ class RoundPlan:
     first_chirp: int
     chirp_count: int
     is_drift_bracket: bool = False
+    is_together: bool = False
+    """Every speaker audible at once — the check that the solo readings add up
+    to what a listener actually hears. See :mod:`speaker_sync.calibration.together`."""
 
     @property
     def last_chirp(self) -> int:
@@ -73,6 +79,12 @@ class MeasurementAnalysis:
     drift_ms: float
     """Microphone clock drift across the whole session, already divided out."""
 
+    drift_per_chirp: float = 0.0
+    """The same drift as a rate, in samples per chirp, measured from
+    ``drift_origin`` (a chirp index on the track's own numbering)."""
+
+    drift_origin: float = 0.0
+
     problems: tuple[str, ...] = field(default=())
 
     @property
@@ -85,18 +97,21 @@ def plan_rounds(
     player_ids: Sequence[str],
     *,
     chirps_per_round: int = DEFAULT_CHIRPS_PER_ROUND,
+    together: bool = False,
 ) -> list[RoundPlan]:
     """Lay out the session: reference, every other speaker, reference again.
 
     The repeated reference at the end is what makes drift measurable — the two
     readings of the same speaker differ only by how far the microphone's clock
     wandered while the session ran.
+
+    ``together`` appends one more round with every speaker audible.
     """
     if chirps_per_round < 1:
         raise ValueError(f"chirps_per_round must be >= 1, got {chirps_per_round}")
 
     order = [reference_id, *[p for p in player_ids if p != reference_id], reference_id]
-    return [
+    rounds = [
         RoundPlan(
             player_id=player_id,
             first_chirp=position * chirps_per_round,
@@ -105,6 +120,16 @@ def plan_rounds(
         )
         for position, player_id in enumerate(order)
     ]
+    if together:
+        rounds.append(
+            RoundPlan(
+                player_id=TOGETHER,
+                first_chirp=len(order) * chirps_per_round,
+                chirp_count=chirps_per_round,
+                is_together=True,
+            )
+        )
+    return rounds
 
 
 def total_chirps(rounds: Sequence[RoundPlan]) -> int:
@@ -126,7 +151,7 @@ def analyze(
     reference speaker audible, so chirp zero is reliably present.
     """
     if not arrivals:
-        return MeasurementAnalysis({}, 0.0, (say(en="no chirps were found in the recording", ru="в записи не найдено ни одного свиста"),))
+        return MeasurementAnalysis({}, 0.0, problems=(say(en="no chirps were found in the recording", ru="в записи не найдено ни одного свиста"),))
 
     offset = min(a.chirp_index for a in arrivals)
     by_chirp = {a.chirp_index - offset: a for a in arrivals}
@@ -137,6 +162,8 @@ def analyze(
     # to the right point in the session.
     per_round: list[tuple[RoundPlan, list[tuple[int, float]]]] = []
     for plan in rounds:
+        if plan.is_together:
+            continue  # not a reading of any one speaker; checked separately
         readings_in_round = [
             (index, by_chirp[index].residual)
             for index in plan.measured_chirps(guard_chirps)
@@ -199,6 +226,8 @@ def analyze(
     return MeasurementAnalysis(
         readings=readings,
         drift_ms=samples_to_ms(drift_total, sample_rate),
+        drift_per_chirp=drift_rate,
+        drift_origin=drift_origin,
         problems=tuple(problems),
     )
 

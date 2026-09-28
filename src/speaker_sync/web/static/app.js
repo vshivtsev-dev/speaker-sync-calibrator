@@ -56,6 +56,7 @@ const STRINGS = {
     verifying: 'Verification pass…',
     measuring: 'Measuring…',
     playing: (v) => `Playing: ${v.name} (${v.round}/${v.rounds})`,
+    everyone: 'every speaker at once',
     applying: (v) => `Applying corrections (${v.writes})…`,
     guard_too_many: (v) => `The first ${v.guard} chirps of each round are discarded — the`
       + ' switch-over masks them. More are needed.',
@@ -90,6 +91,7 @@ const STRINGS = {
     does_not_fit: 'The spread does not fit within ±500 ms — some speakers cannot be'
       + ' fully aligned.',
     verified: 'The verification pass confirmed the result.',
+    together_ok: (v) => `With every speaker playing at once: ${v.spread} ms apart, as measured one by one.`,
     done: 'Done.',
     done_with_notes: 'Finished with remarks.',
     nothing_saved: 'Nothing saved yet',
@@ -136,6 +138,7 @@ const STRINGS = {
     verifying: 'Проверочный замер…',
     measuring: 'Замер…',
     playing: (v) => `Играет: ${v.name} (${v.round}/${v.rounds})`,
+    everyone: 'все колонки сразу',
     applying: (v) => `Применяю поправки (${v.writes})…`,
     guard_too_many: (v) => `Первые ${v.guard} свиста в каждом круге отбрасываются — их`
       + ' заглушает переключение. Нужно больше.',
@@ -168,6 +171,7 @@ const STRINGS = {
       + ' поэтому все подтянуты к самой быстрой колонке.',
     does_not_fit: 'Разброс не влезает в ±500 мс — часть колонок выровнять до конца нельзя.',
     verified: 'Проверочный замер подтвердил результат.',
+    together_ok: (v) => `Когда играют все сразу: расхождение ${v.spread} мс, как и по одной.`,
     done: 'Готово.',
     done_with_notes: 'Завершено с замечаниями.',
     nothing_saved: 'Пока ничего не сохранено',
@@ -377,10 +381,11 @@ function describeRoundLength() {
   }
 
   // One round per speaker, plus a repeat of the first to measure clock drift,
-  // and the whole thing runs twice: measure, then verify.
+  // and the whole thing runs twice: measure, then verify — the verification
+  // with one more round at the end, every speaker at once.
   const rounds = ready ? ready + 1 : 0;
   const total = rounds * chirps;
-  const seconds = Math.round(total * session.period_seconds * 2);
+  const seconds = Math.round((2 * total + (rounds ? chirps : 0)) * session.period_seconds);
 
   let note = t('readings', { n: readings });
   if (rounds) {
@@ -396,6 +401,7 @@ function describeRoundLength() {
 let players = [];
 
 function nameOf(playerId) {
+  if (playerId === '*') return t('everyone');
   const found = players.find((p) => p.player_id === playerId);
   return found ? found.name : playerId;
 }
@@ -543,6 +549,9 @@ function showReport(report) {
   report.problems.forEach((p) => notes.push(['bad', p]));
   if (!notes.length && report.improved) {
     notes.push(['', t('verified')]);
+  }
+  if (report.together && report.together.confirmed) {
+    notes.push(['', t('together_ok', { spread: report.together.spread_ms.toFixed(1) })]);
   }
 
   el('notes').innerHTML = notes

@@ -68,6 +68,12 @@ class VirtualSpeaker:
     ``T * ln 2 / ln(f_end / f_start)``, 94 ms at the default sweep — which is
     exactly where a first-arrival detector looks."""
 
+    together_shift_ms: float = 0.0
+    """Extra delay while other speakers play too.
+
+    Models what the solo rounds cannot see: a player that resynchronises
+    when the rest of the group is unmuted. The together round must catch it."""
+
     def emit(self, chirp: np.ndarray) -> np.ndarray:
         if self.distortion == 0.0:
             return chirp
@@ -171,6 +177,7 @@ def render_recording(
             s.total_latency_ms
             + max((r[0] for r in s.reflections), default=0.0)
             + max((g[1] for g in s.glitches), default=0.0)
+            + max(s.together_shift_ms, 0.0)
             for s in speakers
         ),
         default=0.0,
@@ -189,12 +196,17 @@ def render_recording(
         # Playback time of this chirp in the stream's own timeline, which is
         # what the mute schedule is expressed against.
         moment = index * cfg.period_seconds
-        for speaker in speakers:
-            if not any(r.covers(moment) and speaker.player_id in r.audible for r in rounds):
-                continue
+        audible_now = [
+            speaker
+            for speaker in speakers
+            if any(r.covers(moment) and speaker.player_id in r.audible for r in rounds)
+        ]
+        for speaker in audible_now:
 
             emitted = speaker.emit(chirp)
             glitch_ms = speaker.glitch_at(index)
+            if len(audible_now) > 1:
+                glitch_ms += speaker.together_shift_ms
             arrivals = [(0.0, 1.0), *speaker.reflections]
             for extra_ms, extra_gain in arrivals:
                 position = (

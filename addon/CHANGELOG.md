@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.1.7
+- The verification pass ends with every speaker playing at once and checks that they line up together as they did one by one (about 6.5 s longer).
+
 ## 0.1.6
 - Softer test sound: a longer, lower sweep (0.5 s, 150–6000 Hz) instead of the shrill whistle.
 - More accurate with a reflection right behind the direct sound (e.g. phone on a table).

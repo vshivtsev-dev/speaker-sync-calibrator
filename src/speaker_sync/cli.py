@@ -318,6 +318,12 @@ def _format_report(report: CalibrationReport) -> str:
     ]
     if report.spread_after_ms is not None:
         lines.append(f"  spread after    {report.spread_after_ms:7.1f} ms")
+    if report.together is not None and report.together.heard_ms:
+        verdict = "confirmed" if report.together.confirmed else "does NOT hold"
+        lines.append(
+            f"  all together    {report.together.spread_ms:7.1f} ms   ({verdict}, "
+            f"{report.together.residual_db:.0f} dB unexplained)"
+        )
     lines.append("")
     lines.append(f"  {'speaker':24s} {'was':>8s} {'now':>8s} {'residual':>10s}")
     for correction in report.solution.corrections:

@@ -69,7 +69,9 @@ Five details carry most of the accuracy:
 Which way each delay setting runs is taken from the specification where
 there is one, and **measured, not assumed** where there is not. After
 corrections are written the app measures again, so the result is demonstrated
-rather than asserted.
+rather than asserted — and that pass ends with every speaker playing at once,
+checked against the sum of the solo rounds, so the alignment is confirmed the
+way you will actually hear it.
 
 Why speakers are measured one at a time rather than all together on different
 tones, and what the research says about the test signal, is in

@@ -146,6 +146,62 @@ All three stay under 1 ms, so the old behaviour was never audible. What the
 change buys is margin, and a detector that no longer depends on luck with
 ripples.
 
+## The closing round: everyone at once
+
+Every reading is taken with one speaker audible, but nobody listens that
+way. The verification pass therefore ends with one more round, of five
+chirps (about 6.5 s), in which every speaker plays. It is checked against
+the solo rounds.
+
+**Why not simply how long the sound lasts.** The obvious test is whether the
+combined sound runs longer than one chirp. It does not work. The sweep lasts
+500 ms and the room adds a reverberant tail of several hundred more. On the
+simulator, two speakers 1 ms apart made the sound 1 ms "longer" out of 492,
+and 2 ms apart made it *shorter*: the difference is lost in the noise.
+
+**What works instead.** After correlation each chirp is a pulse about 0.2 ms
+wide, and there the same idea is sharp. What stops a naive "is the pulse
+wider than it should be" is reflections: a bounce 0.5–3 ms behind the direct
+sound looks just like a second speaker. The check therefore compares the
+together round with a **prediction**, not with an ideal pulse. Sound in a
+room adds linearly, so the together round must equal the sum of the solo
+rounds. Each speaker is included with its own reflections, already recorded
+in the same pass, on the same chirp grid. A reflection is then part of the
+prediction rather than a false alarm.
+
+The prediction is so sensitive that it cannot be used with a fixed
+threshold. On the simulator a 0.1 ms shift already leaves −3.4 dB
+unexplained, against −44 to −84 dB when nothing moved. So each speaker's
+pulse is allowed to slide until the sum fits, and the result is where the
+pulses ended up: the spread **as heard with everyone playing**, set against
+the spread the solo rounds of the same pass measured. The report shows both.
+It flags:
+
+- the spread with everyone playing is wider than the solo spread by more than
+  0.5 ms (or three times the worst speaker's own scatter): something changes
+  when the whole group plays, for example a speaker resyncing when the others
+  are unmuted;
+- more than a quarter of the together round's energy (−6 dB) stays
+  unexplained after the fit: a speaker probably went silent or played
+  something else in that round.
+
+What it does not do is name the speaker that moved. Speakers whose pulses
+look alike can trade places in the fit without changing the sum, so only the
+set of arrival times is certain, not who owns each one. On the simulator,
+where every speaker has the same pulse, the fit put one speaker's shift on
+another; naming a speaker would sometimes name the wrong one.
+
+**Sign.** The direction of `sync_adjust` is already settled by the
+verification pass (`observed_convention`), which rewrites the corrections if
+the first attempt went the wrong way. The together round is independent
+evidence of the final state. After a wrong-sign attempt had to be corrected,
+it still confirms the result in the tests.
+
+**Accuracy.** The together round confirms synchronisation to roughly
+0.2–0.5 ms. The finer figure comes from the solo readings. It complements the
+verification pass rather than replacing it: what only it can see is a
+difference between speakers playing alone and playing together.
+
 ## Known limits
 
 - A speaker's direct sound more than ~6 dB below its own loudest reflection is

@@ -210,6 +210,27 @@ def correlation_envelope(
     recording, so positions map straight back to the recording's timeline with
     no offset to remember.
     """
+    return np.abs(
+        analytic_correlation(
+            recording, reference, sample_rate=sample_rate, f_start=f_start, f_end=f_end
+        )
+    )
+
+
+def analytic_correlation(
+    recording: np.ndarray,
+    reference: np.ndarray,
+    *,
+    sample_rate: int | None = None,
+    f_start: float | None = None,
+    f_end: float | None = None,
+) -> np.ndarray:
+    """The correlation as a complex analytic signal, phase included.
+
+    The envelope throws the phase away, which is right for finding an arrival
+    but not for adding arrivals up: two speakers playing together interfere,
+    and only the complex signal predicts how.
+    """
     rec = np.asarray(recording, dtype=np.float64)
     ref = np.asarray(reference, dtype=np.float64)
     if len(rec) < len(ref):
@@ -221,11 +242,11 @@ def correlation_envelope(
     kernel = whitening_filter(ref)
     start = len(ref) - 1
     correlation = fftconvolve(rec, kernel, mode="full")[start : start + len(rec) - len(ref) + 1]
-    return _analytic_envelope(correlation, pad=max(len(ref), 4096))
+    return _analytic_signal(correlation, pad=max(len(ref), 4096))
 
 
-def _analytic_envelope(signal: np.ndarray, *, pad: int) -> np.ndarray:
-    """Envelope via the analytic signal, with the wraparound kept out.
+def _analytic_signal(signal: np.ndarray, *, pad: int) -> np.ndarray:
+    """The analytic signal, with the wraparound kept out.
 
     ``scipy.signal.hilbert`` is an FFT method and therefore circular: energy
     from a strong peak at one end of the array reappears at the other. On a
@@ -237,7 +258,7 @@ def _analytic_envelope(signal: np.ndarray, *, pad: int) -> np.ndarray:
     total = next_fast_len(len(signal) + 2 * pad)
     padded = np.zeros(total, dtype=np.float64)
     padded[pad : pad + len(signal)] = signal
-    return np.abs(hilbert(padded))[pad : pad + len(signal)]
+    return hilbert(padded)[pad : pad + len(signal)]
 
 
 def _parabolic_peak(envelope: np.ndarray, index: int) -> float:
