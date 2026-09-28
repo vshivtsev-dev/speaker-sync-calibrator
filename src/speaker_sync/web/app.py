@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import secrets
+from functools import lru_cache
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -44,6 +45,33 @@ from speaker_sync.i18n import resolve_language, say
 from speaker_sync.ma.backend import SelectedSpeakers, SpeakerBackend
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@lru_cache(maxsize=8)
+def track_wav(
+    chirps: int,
+    period_seconds: float,
+    chirp_seconds: float,
+    f_start: float,
+    f_end: float,
+    sample_rate: int,
+) -> bytes:
+    """The test track, rendered once per shape and then served as a file.
+
+    Music Assistant fetches it at least twice per pass (a probe, then the
+    stream) and a calibration is two passes, so rendering on every request
+    only made the start of playback wait on numpy. The track is deterministic,
+    so a cached copy is byte-for-byte what a fresh render would produce.
+    """
+    signal = build_test_signal(
+        chirp_count=chirps,
+        period_seconds=period_seconds,
+        chirp_seconds=chirp_seconds,
+        f_start=f_start,
+        f_end=f_end,
+        sample_rate=sample_rate,
+    )
+    return to_wav_bytes(signal.samples, signal.sample_rate)
 
 # Audio is uploaded as it is recorded, so by the time recording stops most of
 # it has already arrived and this covers only the tail. It still scales with
@@ -511,16 +539,15 @@ def create_app(state: AppState) -> web.Application:
             raise web.HTTPBadRequest(reason="chirps out of range")
 
         cfg = state.session_config
-        signal = build_test_signal(
-            chirp_count=chirps,
-            period_seconds=cfg.period_seconds,
-            chirp_seconds=cfg.chirp_seconds,
-            f_start=cfg.f_start,
-            f_end=cfg.f_end,
-            sample_rate=cfg.track_sample_rate,
-        )
         return web.Response(
-            body=to_wav_bytes(signal.samples, signal.sample_rate),
+            body=track_wav(
+                chirps,
+                cfg.period_seconds,
+                cfg.chirp_seconds,
+                cfg.f_start,
+                cfg.f_end,
+                cfg.track_sample_rate,
+            ),
             content_type="audio/wav",
             headers={"Cache-Control": "no-store"},
         )

@@ -24,6 +24,7 @@ from sim.fake_ma import (
 )
 from speaker_sync.calibration.profiles import ProfileStore
 from speaker_sync.calibration.session import SessionConfig, calibrate
+from speaker_sync.dsp.signals import build_test_signal, to_wav_bytes
 from speaker_sync.ma.backend import PlayerInfo
 from speaker_sync.web.app import (
     MAX_CHIRPS_PER_ROUND,
@@ -95,6 +96,29 @@ async def test_track_length_follows_the_requested_chirp_count(state):
         await client.close()
 
     assert len(long) > len(short) * 2.5
+
+
+async def test_cached_track_is_exactly_a_fresh_render(state):
+    """The track is served from a cache, which is only sound because it is
+    deterministic: what Music Assistant plays must be exactly the chirp grid
+    the analysis assumes."""
+    cfg = state.session_config
+    signal = build_test_signal(
+        chirp_count=6,
+        period_seconds=cfg.period_seconds,
+        chirp_seconds=cfg.chirp_seconds,
+        f_start=cfg.f_start,
+        f_end=cfg.f_end,
+        sample_rate=cfg.track_sample_rate,
+    )
+    client = await client_for(create_app(state))
+    try:
+        first = await (await client.get("/signal.wav?chirps=6")).read()
+        second = await (await client.get("/signal.wav?chirps=6")).read()
+    finally:
+        await client.close()
+
+    assert first == second == to_wav_bytes(signal.samples, signal.sample_rate)
 
 
 @pytest.mark.parametrize("query", ["?chirps=0", "?chirps=9999", "?chirps=abc"])

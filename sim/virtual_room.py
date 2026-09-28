@@ -12,7 +12,7 @@ in the detector is genuinely exercised instead of being handed integers.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -60,6 +60,19 @@ class VirtualSpeaker:
     stumbling. The median across a round should absorb it, and the analysis
     should say it happened."""
 
+    distortion: float = 0.0
+    """Second-order nonlinearity: the speaker emits ``x + distortion * x**2``.
+
+    An overdriven cheap speaker. With an exponential sweep its harmonics
+    correlate with the reference *ahead* of the linear response — the 2nd by
+    ``T * ln 2 / ln(f_end / f_start)``, 94 ms at the default sweep — which is
+    exactly where a first-arrival detector looks."""
+
+    def emit(self, chirp: np.ndarray) -> np.ndarray:
+        if self.distortion == 0.0:
+            return chirp
+        return chirp + self.distortion * chirp**2
+
     def glitch_at(self, chirp_index: int) -> float:
         return sum(extra for index, extra in self.glitches if index == chirp_index)
 
@@ -73,17 +86,7 @@ class VirtualSpeaker:
         return self.hardware_latency_ms + self.acoustic_ms + self.sign * self.sync_adjust_ms
 
     def with_adjust(self, sync_adjust_ms: int) -> "VirtualSpeaker":
-        return VirtualSpeaker(
-            player_id=self.player_id,
-            name=self.name,
-            hardware_latency_ms=self.hardware_latency_ms,
-            distance_m=self.distance_m,
-            gain=self.gain,
-            sync_adjust_ms=sync_adjust_ms,
-            reflections=self.reflections,
-            sign=self.sign,
-            glitches=self.glitches,
-        )
+        return replace(self, sync_adjust_ms=sync_adjust_ms)
 
 
 @dataclass(frozen=True)
@@ -190,6 +193,7 @@ def render_recording(
             if not any(r.covers(moment) and speaker.player_id in r.audible for r in rounds):
                 continue
 
+            emitted = speaker.emit(chirp)
             glitch_ms = speaker.glitch_at(index)
             arrivals = [(0.0, 1.0), *speaker.reflections]
             for extra_ms, extra_gain in arrivals:
@@ -199,7 +203,7 @@ def render_recording(
                     + (speaker.total_latency_ms + glitch_ms + extra_ms) * rate / 1000.0
                 )
                 whole = int(np.floor(position))
-                shifted = _fractional_shift(chirp, position - whole)
+                shifted = _fractional_shift(emitted, position - whole)
                 gain = cfg.amplitude * speaker.gain * extra_gain
                 recording[whole : whole + len(shifted)] += shifted * gain
 

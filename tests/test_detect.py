@@ -19,6 +19,8 @@ from speaker_sync.dsp.detect import (
     detection_threshold,
     estimate_noise_floor,
     find_first_arrival,
+    harmonic_lead_seconds,
+    max_direct_lead,
 )
 from speaker_sync.dsp.signals import build_test_signal, exponential_sweep, to_wav_bytes
 from tests.support import run_session, three_speakers
@@ -35,7 +37,7 @@ def test_clean_signal_is_essentially_exact():
 
 @pytest.mark.parametrize("snr_db", [40.0, 20.0, 10.0, 0.0, -20.0])
 def test_accuracy_survives_noise(snr_db):
-    """Matched filtering buys ~30 dB of processing gain over a 300 ms sweep,
+    """Correlation buys ~30 dB of processing gain over a 500 ms sweep,
     so even a recording where the chirp is buried below the noise resolves."""
     result = run_session(three_speakers(), snr_db=snr_db)
 
@@ -84,6 +86,50 @@ def test_reflection_louder_than_direct_sound():
 
     assert not result.analysis.problems
     assert result.worst_error_ms(REFERENCE) < 1.0
+
+
+def test_distortion_harmonics_do_not_pass_for_an_early_arrival():
+    """An overdriven speaker whose loudest arrival is a reflection.
+
+    The exponential sweep puts each harmonic's correlation peak *before* the
+    linear one (Farina, AES 108). With the threshold set by the loud bounce,
+    the bounce's own 2nd harmonic lands 94 ms ahead of it and clears the bar —
+    a detector that walks forward from the start of its window reports a
+    latency ~90 ms too early.
+    """
+    speakers = three_speakers(
+        c={"distortion": 1.5, "reflections": ((6.0, 1.4),)},
+    )
+    result = run_session(speakers, snr_db=30.0)
+
+    assert not result.analysis.problems
+    assert result.worst_error_ms(REFERENCE) < 1.0
+
+
+def test_search_ahead_of_the_peak_stops_short_of_the_second_harmonic():
+    rate = 48000
+    chirp = build_test_signal(chirp_count=1)
+    harmonic = harmonic_lead_seconds(chirp.chirp_seconds, chirp.f_start, chirp.f_end)
+    lead = max_direct_lead(len(chirp.reference(rate)), rate, chirp.f_start, chirp.f_end)
+
+    assert harmonic == pytest.approx(0.094, abs=1e-3)
+    assert lead / rate < harmonic
+
+
+@pytest.mark.parametrize("snr_db", [10.0, -20.0])
+def test_bounce_within_a_millisecond_does_not_bias_the_arrival(snr_db):
+    """A floor or table bounce 0.4–0.8 ms behind the direct sound, louder than
+    it. With a plain matched filter the sweep's wide, rippled pulse let the
+    first-arrival walk stop ~0.2 ms early; whitening keeps it on the peak."""
+    speakers = three_speakers(
+        a={"reflections": ((0.5, 1.2),)},
+        b={"reflections": ((0.8, 1.2),)},
+        c={"reflections": ((0.4, 1.0),)},
+    )
+    result = run_session(speakers, snr_db=snr_db)
+
+    assert not result.analysis.problems
+    assert result.worst_error_ms(REFERENCE) < 0.05
 
 
 def test_silent_speaker_is_reported_missing_not_measured():

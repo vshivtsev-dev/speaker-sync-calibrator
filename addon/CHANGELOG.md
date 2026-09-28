@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+- Softer test sound: a longer, lower sweep (0.5 s, 150–6000 Hz) instead of the shrill whistle.
+- More accurate with a reflection right behind the direct sound (e.g. phone on a table).
+- An overdriven speaker's distortion can no longer be mistaken for its arrival.
+
 ## 0.1.5
 - Fix blank panel after an update when a CDN (e.g. Cloudflare) cached the old script.
 
