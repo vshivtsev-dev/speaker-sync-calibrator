@@ -21,10 +21,10 @@ the **Configuration** tab to fix; it keeps retrying in the background.
 The panel is served through ingress, so it uses your Home Assistant login and
 its HTTPS. HTTPS matters: browsers only offer the microphone to a secure page.
 If you open Home Assistant over plain `http://` from another device, the
-microphone will not be available.
+microphone will not be available — the page says so at the top.
 
-If the microphone is refused inside the panel, use the link the page offers to
-open Speaker Sync Calibrator in a separate tab. That address is still ingress and still
+If the microphone is refused inside the panel over HTTPS, use the link the page
+offers to open Speaker Sync Calibrator on its own, without the panel around it. That address is still ingress and still
 behind your login; some browsers and the companion app simply do not pass the
 microphone through to an embedded page.
 
