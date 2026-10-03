@@ -505,6 +505,9 @@ def create_app(state: AppState) -> web.Application:
                         "enabled": p.user_enabled,
                         "calibratable": p.is_calibratable,
                         "excluded_because": p.exclusion_reason,
+                        # A group never makes a sound of its own: it has no
+                        # delay setting to miss and nothing to switch off.
+                        "renders_audio": p.renders_audio,
                         "sync_adjust_key": p.sync_adjust_key,
                         # Shown when no delay setting was found, so the next
                         # round of diagnosis is a glance rather than a call.

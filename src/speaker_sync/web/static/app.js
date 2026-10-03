@@ -482,12 +482,13 @@ async function refreshPlayers() {
   );
 
   const rows = players.map((p) => `
-    <tr class="${p.enabled ? '' : 'off'}">
+    <tr class="${p.enabled && p.renders_audio !== false ? '' : 'off'}">
       <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
         // Always folded away: the names are for diagnosis, not for reading.
         // The summary says so when they matter — the delay setting was not
         // found, and seeing what is there turns that into a one-line fix.
-        p.config_keys && p.config_keys.length
+        // A group has no delay setting by nature, so nothing to diagnose.
+        p.renders_audio !== false && p.config_keys && p.config_keys.length
           ? `<details class="keys" data-player="${escapeAttr(p.player_id)}"${
               unfolded.has(p.player_id) ? ' open' : ''}><summary>${t(
               p.enabled && p.available && !p.sync_adjust_key ? 'settings_found' : 'settings_all'
@@ -503,14 +504,16 @@ async function refreshPlayers() {
       <td class="num">${p.sync_adjust_key
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} ${t('ms')}`
         : '—'}</td>
-      <td>
+      <td class="verdict">
         <span class="pill ${p.calibratable ? 'on' : 'off'}">${
           escapeHtml(p.calibratable ? t('ready_pill') : (p.excluded_because || t('not_taking_part')))
-        }</span>
+        }</span>${
+        // A group is never measured either way, so a switch would do nothing.
+        p.renders_audio === false ? '' : `
         <button class="toggle" data-toggle="${escapeAttr(p.player_id)}"
                 data-enable="${p.enabled ? '0' : '1'}"${busy ? ' disabled' : ''}>${
           t(p.enabled ? 'switch_off' : 'switch_on')
-        }</button>
+        }</button>`}
       </td>
     </tr>`).join('');
 

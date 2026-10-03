@@ -41,6 +41,7 @@
     -webkit-text-size-adjust: 100%;
   }
   main { max-width: 720px; margin: 0 auto; }
+  a { color: var(--accent); }
 
   h1 { font-size: 20px; margin: 0 0 2px; }
   h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
@@ -172,6 +173,29 @@
   }
   .toggle:hover:enabled { color: var(--ink); border-color: var(--muted); }
   tr.off td:first-child { color: var(--muted); }
+  #players .pill { white-space: nowrap; }
+
+  /* On a phone three columns squeeze the speaker's name into a narrow strip:
+     each speaker becomes a block instead — name on top, then its delay on the
+     left and its verdict with the switch on the right. */
+  @media (max-width: 560px) {
+    #players thead { display: none; }
+    #players tr {
+      display: grid; grid-template-columns: auto 1fr; align-items: center;
+      column-gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line);
+    }
+    #players tr:last-child { border-bottom: 0; }
+    #players td { border: 0; padding: 0; }
+    #players td:first-child { grid-column: 1 / -1; margin-bottom: 6px; }
+    #players td[colspan] { margin-bottom: 0; }
+    #players td.num { text-align: left; white-space: nowrap; }
+    #players td.num::before { content: "sync_adjust "; color: var(--muted); font-size: 12px; }
+    #players td.verdict {
+      display: flex; flex-wrap: wrap; justify-content: flex-end;
+      align-items: center; gap: 6px;
+    }
+    #players td.verdict .toggle { display: inline-block; margin: 0; }
+  }
 </style>
 </head>
 <body>

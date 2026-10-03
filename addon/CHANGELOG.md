@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+- Speaker list fits a phone screen: each speaker is a block, the name no longer squeezed into a narrow column.
+- A group is no longer reported as missing its delay setting, and has no on/off switch (it is never measured anyway).
+- The "open in a separate tab" link is readable in dark mode.
+
 ## 0.1.8
 - **Check without changes**: measures the speakers as they are, at 44.1 and 48 kHz and all together, and writes nothing.
 - **Listen to clicks**: clicks on every speaker at once to judge sync by ear.
