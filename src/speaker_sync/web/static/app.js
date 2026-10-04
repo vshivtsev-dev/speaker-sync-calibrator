@@ -26,8 +26,11 @@ function plural(count, forms) {
 const STRINGS = {
   en: {
     tagline: 'Align your speakers\' delays using your phone\'s microphone',
-    popout_text: 'The microphone may be unavailable inside the Home Assistant panel —',
-    popout_link: 'open Speaker Sync Calibrator in a separate tab',
+    popout_text: 'The browser may refuse the microphone to a page inside the Home Assistant panel —',
+    popout_link: 'open Speaker Sync Calibrator on its own, without the panel',
+    needs_https: 'The browser only gives the microphone to a page opened over https://, and'
+      + ' Home Assistant is open over plain http:// now. Open it at its https:// address'
+      + ' (Home Assistant Cloud, or your own certificate) and calibration will work.',
     speakers: 'Speakers',
     refresh: 'Refresh',
     loading: 'Loading…',
@@ -121,8 +124,11 @@ const STRINGS = {
   },
   ru: {
     tagline: 'Выравнивание задержек колонок по микрофону телефона',
-    popout_text: 'Микрофон внутри панели Home Assistant может быть недоступен —',
-    popout_link: 'откройте Speaker Sync Calibrator в отдельной вкладке',
+    popout_text: 'Браузер может не дать микрофон странице внутри панели Home Assistant —',
+    popout_link: 'откройте Speaker Sync Calibrator отдельно, без панели',
+    needs_https: 'Браузер даёт микрофон только странице, открытой по https://, а Home'
+      + ' Assistant сейчас открыт по http://. Откройте его по https-адресу (Home Assistant'
+      + ' Cloud или собственный сертификат) — тогда калибровка заработает.',
     speakers: 'Колонки',
     refresh: 'Обновить',
     loading: 'Загрузка…',
@@ -482,12 +488,13 @@ async function refreshPlayers() {
   );
 
   const rows = players.map((p) => `
-    <tr class="${p.enabled ? '' : 'off'}">
+    <tr class="${p.enabled && p.renders_audio !== false ? '' : 'off'}">
       <td>${escapeHtml(p.name)}<br><span class="sub">${escapeHtml(p.transport)}</span>${
         // Always folded away: the names are for diagnosis, not for reading.
         // The summary says so when they matter — the delay setting was not
         // found, and seeing what is there turns that into a one-line fix.
-        p.config_keys && p.config_keys.length
+        // A group has no delay setting by nature, so nothing to diagnose.
+        p.renders_audio !== false && p.config_keys && p.config_keys.length
           ? `<details class="keys" data-player="${escapeAttr(p.player_id)}"${
               unfolded.has(p.player_id) ? ' open' : ''}><summary>${t(
               p.enabled && p.available && !p.sync_adjust_key ? 'settings_found' : 'settings_all'
@@ -503,14 +510,16 @@ async function refreshPlayers() {
       <td class="num">${p.sync_adjust_key
         ? `${p.sync_adjust_ms > 0 ? '+' : ''}${p.sync_adjust_ms} ${t('ms')}`
         : '—'}</td>
-      <td>
+      <td class="verdict">
         <span class="pill ${p.calibratable ? 'on' : 'off'}">${
           escapeHtml(p.calibratable ? t('ready_pill') : (p.excluded_because || t('not_taking_part')))
-        }</span>
+        }</span>${
+        // A group is never measured either way, so a switch would do nothing.
+        p.renders_audio === false ? '' : `
         <button class="toggle" data-toggle="${escapeAttr(p.player_id)}"
                 data-enable="${p.enabled ? '0' : '1'}"${busy ? ' disabled' : ''}>${
           t(p.enabled ? 'switch_off' : 'switch_on')
-        }</button>
+        }</button>`}
       </td>
     </tr>`).join('');
 
@@ -740,11 +749,17 @@ async function start(kind) {
     if (audio.state === 'suspended') await audio.resume();
     socket.send(JSON.stringify({ type: kind, chirps_per_round: chosenChirps() }));
   } catch (error) {
-    setStatus(t('no_microphone') + error.message, 'err');
-    // Inside Home Assistant's panel the page is an iframe, and whether it may
-    // ask for the microphone is the embedding page's call, not ours. The same
-    // ingress address works as a top-level tab, where the browser asks directly.
-    if (window.top !== window.self) el('popout').hidden = false;
+    if (!window.isSecureContext) {
+      // Over plain http there is no microphone API at all, framed or not, and
+      // the browser's own error ("undefined is not an object") explains nothing.
+      setStatus(t('needs_https'), 'err');
+    } else {
+      setStatus(t('no_microphone') + error.message, 'err');
+      // Inside Home Assistant's panel the page is an iframe, and whether it may
+      // ask for the microphone is the embedding page's call, not ours. The same
+      // ingress address works on its own, where the browser asks directly.
+      if (window.top !== window.self) el('popout').hidden = false;
+    }
     setBusy(false);
   }
 }
@@ -771,6 +786,8 @@ el('profiles').addEventListener('click', (event) => {
 });
 
 translatePage();
+// Said up front: over http no button that needs the microphone can ever work.
+if (!window.isSecureContext) el('insecure').hidden = false;
 refreshPlayers();
 refreshProfiles();
 connect();
